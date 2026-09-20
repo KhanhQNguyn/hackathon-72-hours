@@ -112,11 +112,22 @@ WCAG 2.2 is technically a *web content* standard, so it doesn't apply verbatim t
 
 **Testing method, not just design:** before the demo recording, run the app's own UI with **TalkBack enabled** and confirm it's fully navigable — this is the cheapest, highest-credibility accessibility validation step available, and it directly demonstrates "we practice what we preach" to judges.
 
+## 8. Local State (schema.md skipped — see decision below)
+
+No `schema.md`/`models.md` file — there's no database, so there are no models/relationships to document. The template itself recommends skipping this when the system is small and simple; this project qualifies (zero models). The only persisted state, documented here instead of in a separate file:
+
+| Key | Type | Notes |
+|---|---|---|
+| `language_pref` | string (`en` \| `vi`) | Drives STT locale + TTS voice + UI text |
+| `last_search_query` | string, optional | Convenience only — not required for MVP functionality |
+
+Stored via Flutter `SharedPreferences`. No user accounts, no server-side persistence, nothing else to model.
+
 ---
 
 ## ⚠️ To fill in as the build progresses
 
 - [ ] Confirm OpenAI API tier/rate limits and whether the hackathon provides any API credits (worth checking with organisers/mentors on Day 1 — some hackathons sponsor AI API credits)
 - [ ] Run the `AccessibilityService` + real Shopee spike (still pending, highest-risk unknown — see intent.md)
-- [ ] Decide whether schema.md/endpoints.md are needed at all, given there's no backend/database for this MVP — likely **not needed**, since there's no schema or endpoints to document; note this explicitly rather than leaving empty template files
+- [x] schema.md/endpoints.md — **not needed**, confirmed. No backend, no database; the one bit of local state is documented in Section 8 above instead.
 - [ ] TalkBack pass on the app's own UI before final demo recording
