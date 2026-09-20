@@ -127,6 +127,7 @@ Stored via Flutter `SharedPreferences`. No user accounts, no server-side persist
 
 ## ⚠️ To fill in as the build progresses
 
+- [x] endpoints.md — **not needed**, confirmed. No backend, so no hosted routes to document. The project's one outbound API call (to OpenAI) is documented in Section 2 above, since it's a call this app *makes*, not an endpoint it *serves*.
 - [ ] Confirm OpenAI API tier/rate limits and whether the hackathon provides any API credits (worth checking with organisers/mentors on Day 1 — some hackathons sponsor AI API credits)
 - [ ] Run the `AccessibilityService` + real Shopee spike (still pending, highest-risk unknown — see intent.md)
 - [x] schema.md/endpoints.md — **not needed**, confirmed. No backend, no database; the one bit of local state is documented in Section 8 above instead.
