@@ -72,6 +72,18 @@
 - **Why this architecture fits a 3-day build:** it's client-only — no server to stand up, deploy, or keep alive during the demo/evaluation window (one less thing to break). The two genuinely hard components (the `AccessibilityService` and the AI filtering/matching logic) are isolated behind a single platform-channel boundary, so they can be built and tested somewhat independently by different team members in parallel.
 - **Single points of failure to test early:** the platform channel itself (Flutter↔Kotlin communication) and the `AccessibilityService`'s ability to read real Shopee — both are exactly what the spike (still pending) needs to validate before the rest of the build depends on them.
 
+### Software architecture pattern: layered + Finite State Machine (FSM)
+
+Classic web patterns (N-Tier, modular monolith) describe how a *server* is organized — this project has no server, so they don't map directly. What's used instead:
+
+- **Orchestration core = a Finite State Machine**, not a loose collection of feature code. The Domain section below is already a strict sequential pipeline with defined pause/retry points (`Idle → Listening → ParsingIntent → Matching → AwaitingProductConfirmation → Executing → AwaitingPaymentHandoff → Done`, with `Error/Retrying` transitions back to prior states). Modeling it explicitly as an FSM gives a single source of truth for "where the flow is," makes retry logic (Success Criteria's "built-in robustness") a normal state transition rather than special-cased code, and makes the flow unit-testable without a live phone/mic/Shopee.
+- **Layers around the FSM** (mirrors the 8 bounded contexts in Section 6, not a generic web split):
+  1. **UI** — Flutter widgets, purely presentational, driven by current FSM state (effectively MVVM, with the FSM as the "ViewModel")
+  2. **Orchestration** — the FSM itself, pure Dart, no platform/network code inside it
+  3. **Services** — thin, swappable wrapper classes per external dependency (`SpeechService`, `OpenAIService`, `AccessibilityBridge`) — mockable, so UI work can proceed in parallel with the native service still being built
+  4. **Native** — the Kotlin `AccessibilityService`, exposed only via the platform channel, no business logic inside it
+- **Deliberately not using:** full Clean Architecture (entities/use-cases/repositories/DI ceremony). It's the right call for long-lived production software, but the setup cost isn't worth it for 3 people/72 hours — the layered+FSM approach gets most of the readability/parallel-build benefit for a fraction of the cost.
+
 ## 6. Domain
 
 Bounded contexts / responsibilities, mapped to Core Features in intent.md:

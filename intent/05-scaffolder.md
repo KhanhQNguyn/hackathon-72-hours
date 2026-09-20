@@ -4,7 +4,7 @@
 
 > "Based on intent.md, spec.md, schema.md, and endpoints.md, create a scaffolder.md file to set up the initial codebase for the project, organizing folders by architecture (e.g. client/server, app/client...). Then actually scaffold the corresponding folder/file structure."
 
-## Expected folder structure
+## Example folder structure
 
 ```
 project-root/
