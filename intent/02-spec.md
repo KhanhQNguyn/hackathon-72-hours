@@ -124,6 +124,19 @@ WCAG 2.2 is technically a *web content* standard, so it doesn't apply verbatim t
 
 **Testing method, not just design:** before the demo recording, run the app's own UI with **TalkBack enabled** and confirm it's fully navigable — this is the cheapest, highest-credibility accessibility validation step available, and it directly demonstrates "we practice what we preach" to judges.
 
+### Items from accessibility-wcag.md not yet covered above, closed here
+
+`accessibility-wcag.md` is written generically for web apps; cross-checking its checklist against this project surfaced a few items the table above didn't yet address:
+
+| Checklist item (as written, web-oriented) | Android/Flutter equivalent | Where it's implemented |
+|---|---|---|
+| `<html lang="...">` declared | Flutter `MaterialApp(locale: ...)` set from the language preference, not left to device default | `preferences_service.dart` drives this — same source of truth as the STT/TTS locale (spec.md §6.1), so language stays consistent everywhere |
+| Images have meaningful alt text; decorative images get `alt=""` | `Semantics(label: ...)` for meaningful icons; `ExcludeSemantics` or `Semantics(label: '')` for purely decorative ones | App's icon set is minimal (trigger button, status icon) — audit each one explicitly rather than assuming Flutter's defaults are already correct |
+| Error messages announced to screen readers (`aria-live`/`aria-describedby`) | `Semantics(liveRegion: true)` on the status/narration text widget | **Important addition:** `status_narration_view.dart` (scaffolder.md) should be a live region — if TTS narration fails or is muted, TalkBack still announces status text changes automatically. This makes the "narrate every step" requirement (intent.md Core Feature 3) redundant-safe, not dependent on TTS alone. |
+| Drag-and-drop needs a click/tap alternative | N/A | No drag interactions exist anywhere in this app's own UI |
+| Automated accessibility scan tool (axe/Lighthouse are web-only) | **Android equivalent: Google's Accessibility Scanner app**, run against the built APK | Add to Workstream B6 (plan.md) as a supplement to manual TalkBack testing — catches basic issues faster, same "~30-40% coverage, doesn't replace manual testing" caveat applies |
+| Video/audio has captions or a transcript | Applies to the **submission video itself**, not just the app | Add burned-in or SRT captions to the demo video (plan.md Workstream C6) — for an accessibility-competition submission, an uncaptioned demo video undercuts the pitch; this is a credibility point worth the small extra effort |
+
 ## 8. Local State (schema.md skipped — see decision below)
 
 No `schema.md`/`models.md` file — there's no database, so there are no models/relationships to document. The template itself recommends skipping this when the system is small and simple; this project qualifies (zero models). The only persisted state, documented here instead of in a separate file:
