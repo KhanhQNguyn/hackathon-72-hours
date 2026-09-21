@@ -13,6 +13,29 @@
   3. **Understandable** — content and operation must be clear and predictable
   4. **Robust** — works well with assistive technologies (screen readers, etc.)
 
+## Universal Design — 7 Principles (design-level lens, complements POUR below)
+
+**Purpose of this section:** POUR/WCAG is a *technical compliance checklist* for digital content — it tells you whether a specific screen or component passes/fails. Universal Design is a *design-thinking lens*, applied one level up, before you get to individual components — it asks whether the overall product concept itself is inclusive by default, not retrofitted. Use this section when discussing `01-intent.md` (Problem/Solution framing) and `08-design.md` (overall UX approach), not just at the component-level checklist stage.
+
+*(Source: from the ADC Hackathon 2026 Day 1 workshop "Designing for Everyone: A First Step into Accessibility & Universal Design")*
+
+| # | Principle | What it means | Example |
+|---|---|---|---|
+| 1 | **Equitable Use** | The design is useful and fair for people with all kinds of abilities. It does not single out or stigmatize any user group. | Automatic sliding doors that work equally well for a wheelchair user, a parent with a stroller, or someone carrying boxes |
+| 2 | **Flexibility in Use** | The design accommodates a wide range of individual preferences and abilities. | Scissors with handles comfortable for both left- and right-handed users |
+| 3 | **Simple and Intuitive Use** | The design is easy to understand regardless of the user's experience, language skills, or current level of concentration. | Clear, universally understood icons on a microwave; a door lever instead of a confusing twist knob |
+| 4 | **Perceptible Information** | The design communicates necessary information effectively through multiple senses, regardless of sensory ability or ambient conditions. | Pedestrian crossing signals with an audible click/voice prompt alongside the visual walk light |
+| 5 | **Tolerance for Error** | The design minimizes hazards and adverse consequences of accidental or unintended actions. | An "Undo" button in software; high-contrast, non-slip stair edge strips |
+| 6 | **Low Physical Effort** | The design can be used efficiently and comfortably, with minimal fatigue. | Touchless motion-sensor faucets; rocker light switches |
+| 7 | **Size and Space for Approach and Use** | Appropriate size and space is provided for approach, reach, and use, regardless of the user's body size, posture, or mobility. | Wide hallways, adjustable-height checkout counters |
+
+### How this maps to the current build (Stage 1 direction)
+
+- **#1 Equitable Use** — directly informs the pitch framing: the voice-guided flow should be positioned as *one interaction model that also happens to work for sighted users* (faster, hands-free), not a segregated "special mode for disabled users." This mirrors the "secondary user" note already captured in earlier `01-intent.md` drafts — keep that framing regardless of which app/barrier is finally targeted for Stage 1.
+- **#3 Simple and Intuitive Use** + **#5 Tolerance for Error** — these two directly justify the FSM's confirmation-checkpoint design (pause and confirm before an irreversible action, narrate every step) that's already built into `02-spec.md`/`06-plan.md`. When writing the pitch deck, cite these two principles by name as the design rationale — it's a stronger, more credible answer to "why does your flow pause here?" than just "we thought it was safer."
+- **#4 Perceptible Information** — reinforces the existing rule that status/errors must never be TTS-audio-only (already captured as a `Semantics(liveRegion: true)` requirement in `02-spec.md` §7) — this is the Universal Design justification for that WCAG-level implementation detail.
+- **#2, #6, #7** — less directly applicable to a voice-first mobile app (they're more physical/environmental), but worth a one-line acknowledgment in the deck's "we considered the full Universal Design framework, not just WCAG" narrative, since judges from the Day 1 workshop will recognize the framework by name.
+
 ## Checklist by SDLC step
 
 ### When writing spec.md / scaffolder.md
@@ -46,12 +69,13 @@
 
 ## Sample prompt to load this skill into Claude
 
-> "Before generating or reviewing any UI or interaction flow, check it against the checklist in 10-accessibility-wcag.md (WCAG 2.2 AA standard). If you find a violation, propose a specific fix instead of just naming the issue."
+> "Before generating or reviewing any UI or interaction flow, check it against the checklist in 10-accessibility-wcag.md (WCAG 2.2 AA standard) AND against the 7 Universal Design principles above. WCAG tells you if a component is compliant; Universal Design tells you if the overall concept is inclusive by default. If you find a violation of either, propose a specific fix instead of just naming the issue."
 
 ## Note for the pitch (Day 3)
 
-Since this is an Accessibility Design Competition, proactively stating exactly where you applied WCAG 2.2 AA, with concrete examples (not just a general "we care about accessibility"), is almost certainly a key part of pitch.md. Trace every completed checklist item back to the exact Rubric line it addresses in intent.md.
+Since this is an Accessibility Design Competition, proactively stating exactly where you applied WCAG 2.2 AA, with concrete examples (not just a general "we care about accessibility"), is almost certainly a key part of pitch.md. Trace every completed checklist item back to the exact Rubric line it addresses in intent.md. **Also name the specific Universal Design principle(s)** behind key UX decisions (see mapping above) — this shows the team engaged with both frameworks taught in the Day 1 workshop, not just the compliance checklist.
 
 ## ⚠️ Cần điền khi cuộc thi bắt đầu
 
-- [ ] Không cần điền gì thêm — file này là checklist cố định, dùng nguyên trong suốt cuộc thi.
+- [ ] Không cần điền gì thêm cho phần WCAG/POUR — đây là checklist cố định, dùng nguyên trong suốt cuộc thi.
+- [ ] Phần "How this maps to the current build" cần cập nhật lại một khi đã chốt app đích/barrier cụ thể cho Stage 1 (hiện đang viết theo hướng chung, chưa gắn với 1 app cụ thể).
