@@ -32,6 +32,10 @@ class VoiceCommandGate {
   final int maxAttempts;
   final Future<void> Function(String text)? _narrate;
 
+  /// The most recent utterance that cleared the threshold — its n-best
+  /// alternatives feed intent parsing (milestone36).
+  VoiceCommandResult? lastAccepted;
+
   String _failureMessage = "Couldn't understand the voice command.";
 
   Future<void> _say(String text) => (_narrate ?? tts.speak)(text);
@@ -57,7 +61,10 @@ class VoiceCommandGate {
       final belowThreshold =
           result.confidence < AppConstants.sttConfidenceThreshold ||
           result.transcript.trim().isEmpty;
-      if (!belowThreshold) return result.transcript;
+      if (!belowThreshold) {
+        lastAccepted = result;
+        return result.transcript;
+      }
 
       Logger.log(
         'voice_gate: attempt $attempt/$maxAttempts rejected '

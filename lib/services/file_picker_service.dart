@@ -15,4 +15,15 @@ class FilePickerService {
     );
     return file?.path;
   }
+
+  /// Native picker for the application-form PDF itself (milestone44) —
+  /// the flow has no other way to obtain a PDF path on a real run. Returns
+  /// the path, or `null` if cancelled.
+  Future<String?> pickPdfFile() async {
+    final file = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+    return file?.path;
+  }
 }

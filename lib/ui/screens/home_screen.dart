@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../core/narration_lookup.dart';
 import '../../orchestration/application_flow_controller.dart';
 import '../../orchestration/application_flow_fsm.dart';
+import '../widgets/job_page_view.dart';
 import '../widgets/status_narration_view.dart';
 import '../widgets/voice_trigger_button.dart';
 import 'settings_screen.dart';
@@ -14,7 +15,12 @@ import 'spike_harness_screen.dart';
 /// surface of the app during a flow. See spec.md §5 (UI layer, purely
 /// presentational, driven by the FSM's current state).
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.showWebView = false});
+
+  /// Show the embedded job page below the controls. On only for a real
+  /// (non-mock) run, where the WebView must be in the tree for the flow to
+  /// load and read the page (milestone44).
+  final bool showWebView;
 
   @override
   Widget build(BuildContext context) {
@@ -22,7 +28,9 @@ class HomeScreen extends StatelessWidget {
       body: SafeArea(
         child: Center(
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisAlignment: showWebView
+                ? MainAxisAlignment.start
+                : MainAxisAlignment.center,
             children: [
               // Mirrors the last spoken line; before anything has been said
               // it falls back to the state's placeholder text.
@@ -30,7 +38,7 @@ class HomeScreen extends StatelessWidget {
                 builder: (context, fsm, controller, _) => StatusNarrationView(
                   text: controller.lastNarration.isNotEmpty
                       ? controller.lastNarration
-                      : narrationFor(fsm.state),
+                      : narrationFor(fsm.state, language: controller.language),
                 ),
               ),
               const SizedBox(height: 24),
@@ -62,6 +70,7 @@ class HomeScreen extends StatelessWidget {
                   child: const Text('Debug: spike harness'),
                 ),
               ],
+              if (showWebView) const Expanded(child: JobPageView()),
             ],
           ),
         ),

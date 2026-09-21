@@ -54,6 +54,9 @@ class FakeWebViewControllerService implements WebViewControllerService {
   Future<bool> triggerFileChooser(String nodeId) async => true;
 
   @override
+  Future<bool> clickElement(String nodeId) async => true;
+
+  @override
   Future<void> focusElement(String nodeRef) async {}
 
   @override

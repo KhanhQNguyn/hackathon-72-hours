@@ -54,13 +54,23 @@ class WebViewControllerService {
   Stream<void> get domChangedEvents => _domChangedController.stream;
 
   /// `UserScript`s to pass to the `InAppWebView` widget's
-  /// `initialUserScripts` (milestone12) so `dom_reader.js` is injected at
-  /// `AT_DOCUMENT_START`, before the page's own scripts run.
+  /// `initialUserScripts` (milestone12): `dom_reader.js` and
+  /// `form_filler.js`, both at `AT_DOCUMENT_START`, so the
+  /// `MutationObserver` attaches before the page's own scripts run and
+  /// the `window.__formFiller_*` functions exist by the time
+  /// `fillField`/`triggerFileChooser` call them. (`form_filler.js` was
+  /// missing here until the milestone44 integration pass — every real
+  /// `fillField` would have failed with "is not a function".)
   Future<List<UserScript>> loadInitialUserScripts() async {
     final domReaderSource = await rootBundle.loadString('assets/js/dom_reader.js');
+    final formFillerSource = await rootBundle.loadString('assets/js/form_filler.js');
     return [
       UserScript(
         source: domReaderSource,
+        injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+      ),
+      UserScript(
+        source: formFillerSource,
         injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
       ),
     ];
@@ -329,6 +339,16 @@ class WebViewControllerService {
   Future<bool> triggerFileChooser(String nodeId) async {
     final json = await _evalJson(
       'window.__formFiller_clickFileInput(${jsonEncode(nodeId)})',
+    ) as Map<String, dynamic>;
+    return json['success'] == true;
+  }
+
+  /// Clicks [nodeId] (milestone44) — used only for the final submit
+  /// button, from the FSM's gated submit action. Returns `false` if the
+  /// node is gone.
+  Future<bool> clickElement(String nodeId) async {
+    final json = await _evalJson(
+      'window.__formFiller_clickElement(${jsonEncode(nodeId)})',
     ) as Map<String, dynamic>;
     return json['success'] == true;
   }

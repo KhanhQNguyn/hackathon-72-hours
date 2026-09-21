@@ -79,7 +79,19 @@
     return JSON.stringify({ success: true });
   }
 
+  // milestone44 — clicks a plain element (the real submit button). Kept
+  // separate from setValue/clickFileInput: it is the one call that has a
+  // real-world side effect, and Dart only issues it from the FSM's gated
+  // submit action.
+  function __formFiller_clickElement(nodeId) {
+    var el = document.querySelector('[data-app-node-id="' + nodeId + '"]');
+    if (!el) return JSON.stringify({ success: false, reason: 'node_stale' });
+    el.click();
+    return JSON.stringify({ success: true });
+  }
+
   window.__formFiller_setValue = __formFiller_setValue;
   window.__formFiller_verifyValue = __formFiller_verifyValue;
   window.__formFiller_clickFileInput = __formFiller_clickFileInput;
+  window.__formFiller_clickElement = __formFiller_clickElement;
 })();

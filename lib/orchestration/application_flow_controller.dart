@@ -1,11 +1,21 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import '../core/app_config.dart';
-import '../core/flow_narration.dart';
+import '../core/constants.dart';
+import '../core/language.dart';
+import '../core/narration_lookup.dart';
 import '../core/voice_replies.dart';
 import '../models/dom_snapshot.dart';
+import '../models/element_match_result.dart';
+import '../models/openai_results.dart';
+import '../models/pdf_form_field.dart';
 import '../services/applicant_profile_service.dart';
 import '../services/file_picker_service.dart';
+import '../services/fuzzy_match_service.dart';
+import '../services/openai_service.dart';
 import '../services/page_load_exception.dart';
 import '../services/pdf_parse_exception.dart';
 import '../services/pdf_reader_service.dart';
@@ -16,9 +26,45 @@ import '../services/webview_controller_service.dart';
 import '../utils/logger.dart';
 import 'application_flow_fsm.dart';
 import 'captcha_checkpoint_handler.dart';
+import 'submit_hook.dart';
 import 'voice_command_gate.dart';
 
 enum _Outcome { confirmed, skipped, aborted }
+
+/// An image downloaded for the vision call.
+class FetchedImage {
+  final Uint8List bytes;
+  final String mimeType;
+
+  const FetchedImage(this.bytes, this.mimeType);
+}
+
+/// Downloads [url] for image-to-text, or returns `null` if it can't be
+/// fetched. Handles `data:` URIs; refuses anything over 4 MB.
+Future<FetchedImage?> defaultImageFetcher(String url) async {
+  try {
+    if (url.startsWith('data:')) {
+      final comma = url.indexOf(',');
+      final header = url.substring(5, comma);
+      if (!header.contains(';base64')) return null;
+      return FetchedImage(
+        base64Decode(url.substring(comma + 1)),
+        header.split(';').first,
+      );
+    }
+    final response = await http
+        .get(Uri.parse(url))
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode != 200 || response.bodyBytes.length > 4000000) {
+      return null;
+    }
+    final type = response.headers['content-type']?.split(';').first;
+    return FetchedImage(response.bodyBytes, type ?? 'image/png');
+  } catch (e) {
+    Logger.log('flow: could not fetch image: $e');
+    return null;
+  }
+}
 
 /// Drives one complete run of the flow — the "orchestrating caller" the
 /// FSM's own comments refer to. It sequences the services and fires FSM
@@ -26,20 +72,19 @@ enum _Outcome { confirmed, skipped, aborted }
 /// is, and the only place the real submit action can fire.
 ///
 /// ```
-/// trigger -> spoken command -> load page -> read listing (+ CAPTCHA
-/// check) -> confirm listing (checkpoint 1) -> read form PDF ->
-/// per-field confirm loop -> final review (edit loop) -> confirm
-/// (checkpoint 2) -> submit -> done
+/// trigger -> spoken command -> intent -> load page -> read listing
+/// (+ image transcription, CAPTCHA check) -> confirm listing (checkpoint
+/// 1) -> read form PDF -> per-field confirm loop -> final review (edit
+/// loop) -> confirm (checkpoint 2) -> submit -> done
 /// ```
 ///
 /// Every spoken line is also published in [lastNarration] so the on-screen
 /// status text mirrors the audio (WCAG 3.3.1, spec.md §7).
 ///
-/// Milestone 35 stand-ins, replaced later: the spoken command is not
-/// parsed (milestone 36), images without alt text are only counted
-/// (milestone 37), the listing text is read verbatim rather than
-/// summarized (milestone 38), and fields are matched to the saved profile
-/// by keyword (milestones 39/41).
+/// AI is optional: with no [openAi] (or no API key) each step falls back
+/// to a plain behaviour — any accepted command means "apply", the visible
+/// text is read as-is, images are only counted, the PDF text is read
+/// verbatim — so the app stays usable, and testable, without a key.
 class ApplicationFlowController extends ChangeNotifier {
   ApplicationFlowController({
     required this.fsm,
@@ -51,7 +96,13 @@ class ApplicationFlowController extends ChangeNotifier {
     required this.profileService,
     required this.filePicker,
     this.captchaHandler,
-  }) {
+    this.openAi,
+    FuzzyMatchService? fuzzy,
+    this.imageFetcher = defaultImageFetcher,
+    this.formPdfPathProvider,
+    this.askUserToChooseFormPdf = false,
+    SubmitHook? submitHook,
+  }) : _fuzzy = fuzzy ?? FuzzyMatchService() {
     _gate = VoiceCommandGate(
       fsm: fsm,
       speech: speech,
@@ -59,6 +110,7 @@ class ApplicationFlowController extends ChangeNotifier {
       preferences: preferences,
       narrate: narrate,
     );
+    submitHook?.action = submitApplication;
   }
 
   final ApplicationFlowFsm fsm;
@@ -69,18 +121,43 @@ class ApplicationFlowController extends ChangeNotifier {
   final ApplicantProfileService profileService;
   final FilePickerService filePicker;
   final CaptchaCheckpointHandler? captchaHandler;
+  final OpenAiService? openAi;
+  final Future<FetchedImage?> Function(String url) imageFetcher;
 
+  /// Where the application-form PDF comes from; `null` skips the PDF step.
+  /// Defaults to `AppConfig.applicationFormPdfPath`.
+  final Future<String?> Function()? formPdfPathProvider;
+
+  /// True on a real run, where the user has to pick the PDF themselves.
+  final bool askUserToChooseFormPdf;
+
+  final FuzzyMatchService _fuzzy;
   late final VoiceCommandGate _gate;
   bool _running = false;
   Map<String, String> _profile = {};
   final Map<String, String> _values = {};
   List<DomFormField> _fields = [];
-  FlowNarration _n = FlowNarration('en');
+  FlowNarration _n = FlowNarration(AppLanguage.en);
+
+  /// `'en'` / `'vi'`, refreshed at the start of a run and by
+  /// [refreshLanguage] when the settings screen changes it.
+  String language = AppLanguage.en;
 
   /// Text of the most recent spoken line ('' before the first one).
   String lastNarration = '';
 
   bool get isRunning => _running;
+
+  OpenAiService? get _ai {
+    final ai = openAi;
+    return ai != null && ai.isConfigured ? ai : null;
+  }
+
+  Future<void> refreshLanguage() async {
+    language = await preferences.getLanguagePref();
+    _n = FlowNarration(language);
+    notifyListeners();
+  }
 
   /// Speaks [text] and mirrors it on screen. A TTS failure is logged, not
   /// fatal: the text is still visible and announced by the live region.
@@ -114,19 +191,18 @@ class ApplicationFlowController extends ChangeNotifier {
     }
   }
 
-  Future<void> _refreshNarration() async {
-    _n = FlowNarration(await preferences.getLanguagePref());
-  }
-
   Future<void> _run() async {
-    await _refreshNarration();
-    await fsm.transition(const TriggerPressed());
-    await narrate(_n.commandPrompt);
-    await _gate.run();
-    if (fsm.state is! ParsingIntentState) return _reportError();
+    await refreshLanguage();
 
-    // Milestone 36 parses the command; until then any accepted command
-    // means "read this listing and apply".
+    final intent = await _listenForIntent();
+    if (intent == null) return;
+    if (intent.intentType == IntentType.navigateToElement) {
+      // Feature 2 (Guided TalkBack Assist) is unconfirmed pending spike
+      // A1b, so a "take me to X" request is acknowledged, not acted on.
+      await narrate(_n.navigateUnsupported);
+      await fsm.transition(const FlowReset());
+      return;
+    }
     await fsm.transition(const IntentParsed());
 
     await narrate(_n.loadingPage);
@@ -145,13 +221,9 @@ class ApplicationFlowController extends ChangeNotifier {
     }
     await fsm.transition(const ContentRead());
 
+    await _narrateListing(dom);
+
     // Checkpoint 1: the user confirms this is the right listing.
-    await narrate(
-      _n.listingSummary(
-        text: _clip(dom.visibleText, 400),
-        imagesWithoutAlt: dom.images.where((i) => !i.hasAlt).length,
-      ),
-    );
     await narrate(_n.confirmListing);
     final listingReply = await _gate.listenConfident();
     if (listingReply == null) return _fail('No response to the listing question.');
@@ -161,16 +233,7 @@ class ApplicationFlowController extends ChangeNotifier {
       return;
     }
 
-    await narrate(_n.readingForm);
-    try {
-      final formText = await pdfReader.extractTextWithOcrFallback(
-        AppConfig.applicationFormPdfPath,
-      );
-      await narrate(_n.formText(_clip(formText, 400)));
-    } on PdfParseException catch (e) {
-      await narrate(_n.pdfFailed);
-      return _fail(e.message);
-    }
+    if (!await _readForm()) return;
 
     _fields = dom.labeledFields;
     _profile = await _loadProfile();
@@ -189,6 +252,7 @@ class ApplicationFlowController extends ChangeNotifier {
       final state = fsm.state as FillingFormState;
       final field = _fieldById(state.currentFieldId);
       if (field == null) {
+        await narrate(_n.fieldNotFound(state.currentFieldId));
         await fsm.transition(FieldSkippedNotFound(state.currentFieldId));
         continue;
       }
@@ -210,7 +274,7 @@ class ApplicationFlowController extends ChangeNotifier {
       // not a confirmation.
       final target = editTarget(reply);
       if (target != null) {
-        final field = _matchField(target);
+        final field = await _resolveField(target);
         if (field == null) {
           await narrate(_n.noSuchField(target));
           continue;
@@ -239,6 +303,73 @@ class ApplicationFlowController extends ChangeNotifier {
     }
   }
 
+  // --- intent (milestone 36) ----------------------------------------------
+
+  /// Listens for a command and classifies it. An unrecognised command
+  /// re-prompts exactly like a low STT confidence (up to 3 tries).
+  /// Returns `null` after ending the run in an error.
+  Future<IntentResult?> _listenForIntent() async {
+    const maxTries = 3;
+    for (var attempt = 0; attempt < maxTries; attempt++) {
+      await fsm.transition(const TriggerPressed());
+      if (attempt == 0) await narrate(_n.commandPrompt);
+      await _gate.run();
+      if (fsm.state is! ParsingIntentState) {
+        await _reportError();
+        return null;
+      }
+
+      final intent = await _parseIntent();
+      if (intent == null) return null;
+      if (intent.isRecognized) return intent;
+
+      await narrate(repromptMessage(language));
+      await fsm.transition(const FlowReset());
+    }
+    await _fail("Couldn't understand the request.");
+    return null;
+  }
+
+  Future<IntentResult?> _parseIntent() async {
+    final ai = _ai;
+    if (ai == null) {
+      // No key: any accepted command means "read this listing and apply".
+      return const IntentResult(
+        intentType: IntentType.fillAndSubmit,
+        confidence: 1.0,
+      );
+    }
+
+    final accepted = _gate.lastAccepted;
+    IntentResult? result;
+    Future<bool> attempt() async {
+      try {
+        result = await ai.parseIntent(
+          transcript: accepted?.transcript ?? '',
+          alternatives: accepted?.alternatives ?? const [],
+          languagePref: language,
+        );
+        return true;
+      } on OpenAiException catch (e) {
+        Logger.log('flow: intent parsing failed: $e');
+        return false;
+      }
+    }
+
+    if (await attempt()) return result;
+    final before = fsm.state;
+    await fsm.transition(
+      ErrorOccurred("Couldn't reach the AI service.", retryAction: attempt),
+    );
+    if (fsm.state != before) {
+      await _reportError();
+      return null;
+    }
+    return result;
+  }
+
+  // --- page + listing (milestones 22, 37, 38) -------------------------------
+
   Future<bool> _loadTarget() async {
     Future<bool> attempt() async {
       try {
@@ -251,7 +382,7 @@ class ApplicationFlowController extends ChangeNotifier {
     }
 
     if (await attempt()) return true;
-    await narrate(_n.pageLoadFailed);
+    await narrate(_n.pageRetrying);
     final before = fsm.state;
     await fsm.transition(
       ErrorOccurred('The page did not load.', retryAction: attempt),
@@ -261,16 +392,119 @@ class ApplicationFlowController extends ChangeNotifier {
     return false;
   }
 
-  /// Checks for a CAPTCHA (checkpoint 3). `skipped` = none found,
-  /// `confirmed` = handled (audio challenge, or user solved it and said
-  /// "continue"), `aborted` = the user never resumed.
+  Future<void> _narrateListing(DomSnapshot dom) async {
+    await _describeImages(dom);
+
+    final ai = _ai;
+    if (ai != null && dom.visibleText.trim().isNotEmpty) {
+      try {
+        final summary = await ai.summarizeListing(
+          pageText: dom.visibleText,
+          url: AppConfig.targetUrl,
+        );
+        if (summary.confidence >= 0.5 && summary.listing.title.isNotEmpty) {
+          await narrate(_n.listingFromAi(summary.listing));
+          return;
+        }
+      } on OpenAiException catch (e) {
+        Logger.log('flow: listing summary failed, reading raw text: $e');
+      }
+    }
+    await narrate(
+      _n.listingSummary(
+        text: _clip(dom.visibleText, 400),
+        imagesWithoutAlt: dom.images.where((i) => !i.hasAlt).length,
+      ),
+    );
+  }
+
+  /// Transcribes images that carry no alt text — the core Stage 2 barrier
+  /// (job descriptions posted as pictures). At most 3 per page, and only
+  /// when AI is available (vision calls are the costly ones).
+  Future<void> _describeImages(DomSnapshot dom) async {
+    final ai = _ai;
+    if (ai == null) return;
+    for (final image in dom.images.where((i) => !i.hasAlt).take(3)) {
+      final fetched = await imageFetcher(image.src);
+      if (fetched == null) continue;
+      try {
+        final result = await ai.imageToText(
+          imageBase64: base64Encode(fetched.bytes),
+          mimeType: fetched.mimeType,
+        );
+        if (result.text.isNotEmpty && result.confidence >= 0.5) {
+          await narrate(_n.imageTranscript(result.text));
+        }
+      } on OpenAiException catch (e) {
+        Logger.log('flow: image transcription failed: $e');
+      }
+    }
+  }
+
+  // --- the application-form PDF (milestones 18-23, 40) -------------------------
+
+  /// Reads the form aloud. Returns `false` if the run ended in an error.
+  Future<bool> _readForm() async {
+    if (askUserToChooseFormPdf) await narrate(_n.chooseFormPdf);
+    final path = await (formPdfPathProvider ??
+        () async => AppConfig.applicationFormPdfPath)();
+    if (path == null) {
+      await narrate(_n.noFormPdf);
+      return true;
+    }
+
+    await narrate(_n.readingForm);
+    try {
+      final text = await pdfReader.extractTextWithOcrFallback(path);
+      var detected = const <PdfFormField>[];
+      try {
+        detected = await pdfReader.extractFormFields(path);
+      } catch (e) {
+        Logger.log('flow: no AcroForm fields: $e');
+      }
+
+      final structure = await _structurePdf(text, detected);
+      if (structure != null && structure.sections.isNotEmpty) {
+        for (final s in structure.sections.take(8)) {
+          await narrate(_n.formSection(s.heading, _clip(s.body, 300)));
+        }
+      } else {
+        await narrate(_n.formText(_clip(text, 400)));
+      }
+      return true;
+    } on PdfParseException catch (e) {
+      await narrate(_n.pdfFailed);
+      await _fail(e.message);
+      return false;
+    }
+  }
+
+  Future<PdfStructure?> _structurePdf(
+    String text,
+    List<PdfFormField> detected,
+  ) async {
+    final ai = _ai;
+    if (ai == null) return null;
+    try {
+      return await ai.structurePdf(rawPdfText: text, detectedFormFields: detected);
+    } on OpenAiException catch (e) {
+      Logger.log('flow: PDF structuring failed, reading raw text: $e');
+      return null;
+    }
+  }
+
+  // --- CAPTCHA (checkpoint 3) ------------------------------------------------
+
+  /// Checks for a CAPTCHA. `skipped` = none found, `confirmed` = handled
+  /// (audio challenge, or the user solved it and said "continue"),
+  /// `aborted` = the user never resumed.
   Future<_Outcome> _handleCaptcha() async {
     final handler = captchaHandler;
     if (handler == null) return _Outcome.skipped;
     if (!await handler.checkAndHandle(fsm)) return _Outcome.skipped;
     if (fsm.state is! CaptchaPendingState) return _Outcome.confirmed;
 
-    lastNarration = CaptchaCheckpointHandler.handOffNarration;
+    lastNarration = await handler.handOffText();
     notifyListeners();
     for (var i = 0; i < 5; i++) {
       final reply = await _gate.listenConfident();
@@ -284,6 +518,8 @@ class ApplicationFlowController extends ChangeNotifier {
     return _Outcome.aborted;
   }
 
+  // --- the per-field loop -----------------------------------------------------
+
   /// Collects, fills and confirms one field.
   Future<_Outcome> _fillOne(
     DomFormField field, {
@@ -292,7 +528,7 @@ class ApplicationFlowController extends ChangeNotifier {
     final label = _labelOf(field);
     final key = _profileKey(field);
 
-    if (field.type == 'file') return _attachCv(field, label);
+    if (field.type == 'file') return _attachCv(field);
 
     final value = await _collectValue(
       label,
@@ -306,6 +542,7 @@ class ApplicationFlowController extends ChangeNotifier {
     Future<bool> attempt() async =>
         (await webView.fillField(field.elementId, value)).success;
 
+    await narrate(_n.fillingField(label));
     if (!await attempt()) {
       await narrate(_n.fillFailed(label));
       final before = fsm.state;
@@ -318,11 +555,10 @@ class ApplicationFlowController extends ChangeNotifier {
       }
     }
     _values[field.elementId] = value;
-    await narrate(_n.filled(label));
     return _Outcome.confirmed;
   }
 
-  Future<_Outcome> _attachCv(DomFormField field, String label) async {
+  Future<_Outcome> _attachCv(DomFormField field) async {
     final path = _profile['cvFilePath'] ?? await filePicker.pickCvFile();
     if (path == null) {
       await narrate(_n.cvNone);
@@ -373,6 +609,8 @@ class ApplicationFlowController extends ChangeNotifier {
     }
   }
 
+  // --- matching a spoken field name to a field (milestones 39, 41) ----------------
+
   DomFormField? _fieldById(String id) {
     for (final f in _fields) {
       if (f.elementId == id) return f;
@@ -407,7 +645,53 @@ class ApplicationFlowController extends ChangeNotifier {
     'cvFilePath': 'cv file resume tệp',
   };
 
-  DomFormField? _matchField(String target) {
+  /// Cheapest first: string similarity, then keyword synonyms, and only
+  /// then the AI. A confident AI match is used directly; otherwise the
+  /// user is asked which candidate they meant (spec.md §6) — the app
+  /// never silently acts on a shaky guess.
+  Future<DomFormField?> _resolveField(String target) async {
+    final labels = _fields.map(_labelOf).toList();
+    final fuzzyLabel = _fuzzy.bestMatch(target, labels);
+    if (fuzzyLabel != null) return _fields[labels.indexOf(fuzzyLabel)];
+
+    final keyword = _keywordMatch(target);
+    if (keyword != null) return keyword;
+
+    final ai = _ai;
+    if (ai == null || _fields.isEmpty) return null;
+    final ElementMatchResult match;
+    try {
+      match = await ai.matchElement(targetDescription: target, candidates: _fields);
+    } on OpenAiException catch (e) {
+      Logger.log('flow: element matching failed: $e');
+      return null;
+    }
+    if (match.isConfident(AppConstants.elementMatchConfidenceThreshold)) {
+      return _fieldById(match.elementId!);
+    }
+
+    final options = <DomFormField>[
+      for (final id in [
+        if (match.elementId != null) match.elementId!,
+        ...match.alternativeElementIds,
+      ])
+        ?_fieldById(id),
+    ];
+    if (options.isEmpty) return null;
+
+    final optionLabels = options.map(_labelOf).toList();
+    await narrate(_n.disambiguate(optionLabels));
+    final reply = await _gate.listenConfident();
+    if (reply == null) return null;
+    final chosen = _fuzzy.bestMatch(reply, optionLabels);
+    if (chosen != null) return options[optionLabels.indexOf(chosen)];
+    for (final f in options) {
+      if (sharedWordCount(reply, _labelOf(f)) > 0) return f;
+    }
+    return null;
+  }
+
+  DomFormField? _keywordMatch(String target) {
     DomFormField? best;
     var bestScore = 0;
     for (final f in _fields) {
@@ -427,6 +711,47 @@ class ApplicationFlowController extends ChangeNotifier {
       .where((f) => _values.containsKey(f.elementId))
       .map((f) => '${_labelOf(f)}: ${_values[f.elementId]}')
       .join('. ');
+
+  // --- the real submit (milestone 44) ---------------------------------------------
+
+  /// The one real, side-effecting action: clicks the page's submit button.
+  /// Wired in as the FSM's `performRealSubmit`, so it only ever runs from
+  /// `SubmitConfirmed` in `FinalReviewState`. Throws (the FSM then enters
+  /// `ErrorState`) rather than click something it isn't sure about.
+  Future<void> submitApplication() async {
+    final dom = await webView.readDom(); // fresh node ids
+    final candidates = dom.submitCandidates;
+    if (candidates.isEmpty) {
+      throw StateError('No submit button was found on the page.');
+    }
+
+    var pick = candidates.first;
+    if (candidates.length > 1) {
+      final second = candidates[1];
+      final clearlyFirst =
+          (pick.heuristicScore ?? 0) > (second.heuristicScore ?? 0);
+      final ai = _ai;
+      if (ai != null) {
+        final match = await ai.matchElement(
+          targetDescription: 'button that submits the job application',
+          candidates: candidates,
+        );
+        if (match.isConfident(AppConstants.elementMatchConfidenceThreshold)) {
+          pick = candidates.firstWhere((c) => c.elementId == match.elementId);
+        } else if (!clearlyFirst) {
+          throw StateError('Not sure which button submits the application.');
+        }
+      } else if (!clearlyFirst) {
+        throw StateError('Not sure which button submits the application.');
+      }
+    }
+
+    if (!await webView.clickElement(pick.elementId)) {
+      throw StateError('The submit button could not be clicked.');
+    }
+  }
+
+  // --- helpers ---------------------------------------------------------------------
 
   static String _clip(String text, int max) {
     final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();

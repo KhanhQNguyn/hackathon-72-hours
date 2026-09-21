@@ -1,12 +1,21 @@
+import 'dart:typed_data';
+
 import 'package:job_access_assist/mocks/fake_pdf_reader_service.dart';
 import 'package:job_access_assist/mocks/fake_webview_controller_service.dart';
+import 'package:job_access_assist/models/dom_snapshot.dart';
+import 'package:job_access_assist/models/element_match_result.dart';
 import 'package:job_access_assist/models/fill_field_result.dart';
+import 'package:job_access_assist/models/job_listing.dart';
+import 'package:job_access_assist/models/openai_results.dart';
+import 'package:job_access_assist/models/pdf_form_field.dart';
 import 'package:job_access_assist/models/voice_command_result.dart';
 import 'package:job_access_assist/orchestration/application_flow_controller.dart';
 import 'package:job_access_assist/orchestration/application_flow_fsm.dart';
 import 'package:job_access_assist/orchestration/captcha_checkpoint_handler.dart';
+import 'package:job_access_assist/orchestration/submit_hook.dart';
 import 'package:job_access_assist/services/applicant_profile_service.dart';
 import 'package:job_access_assist/services/file_picker_service.dart';
+import 'package:job_access_assist/services/openai_service.dart';
 import 'package:job_access_assist/services/preferences_service.dart';
 import 'package:job_access_assist/services/speech_service.dart';
 import 'package:job_access_assist/services/tts_service.dart';
@@ -30,7 +39,7 @@ class ScriptedSpeech implements SpeechService {
     return VoiceCommandResult(
       transcript: text,
       confidence: 0.9,
-      alternatives: [text],
+      alternatives: [text, '$text alt'],
     );
   }
 
@@ -88,11 +97,18 @@ class StubFilePicker implements FilePickerService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-/// The canned WebView fake that also records what was filled.
+/// The canned WebView fake that also records what was filled and clicked.
 class SpyWebView extends FakeWebViewControllerService {
   final Map<String, String> filled = {};
   final List<String> fileChooserNodes = [];
+  final List<String> clicked = [];
   bool failFills = false;
+  bool clickSucceeds = true;
+  DomSnapshot? snapshotOverride;
+
+  @override
+  Future<DomSnapshot> readDom() async =>
+      snapshotOverride ?? await super.readDom();
 
   @override
   Future<FillFieldResult> fillField(String nodeId, String value) async {
@@ -111,7 +127,99 @@ class SpyWebView extends FakeWebViewControllerService {
     fileChooserNodes.add(nodeId);
     return true;
   }
+
+  @override
+  Future<bool> clickElement(String nodeId) async {
+    clicked.add(nodeId);
+    return clickSucceeds;
+  }
 }
+
+/// A scripted stand-in for the OpenAI layer.
+class FakeOpenAi implements OpenAiService {
+  /// Intent results returned in order (the last one repeats).
+  List<IntentResult> intents = [
+    const IntentResult(intentType: IntentType.fillAndSubmit, confidence: 0.95),
+  ];
+  int intentCalls = 0;
+  int failIntentTimes = 0;
+  String? lastTranscript;
+  List<String>? lastAlternatives;
+
+  ListingSummary? summary;
+  ImageTranscription? image = const ImageTranscription(
+    text: 'Job posting text from the picture',
+    confidence: 0.9,
+  );
+  final List<String> imageBase64Calls = [];
+  PdfStructure? pdf;
+  ElementMatchResult? match;
+  final List<String> matchTargets = [];
+
+  @override
+  bool get isConfigured => true;
+
+  @override
+  Future<IntentResult> parseIntent({
+    required String transcript,
+    List<String> alternatives = const [],
+    required String languagePref,
+  }) async {
+    intentCalls++;
+    if (failIntentTimes > 0) {
+      failIntentTimes--;
+      throw const OpenAiException('offline');
+    }
+    lastTranscript = transcript;
+    lastAlternatives = alternatives;
+    return intents[(intentCalls - 1).clamp(0, intents.length - 1)];
+  }
+
+  @override
+  Future<ImageTranscription> imageToText({
+    required String imageBase64,
+    String mimeType = 'image/png',
+  }) async {
+    imageBase64Calls.add(imageBase64);
+    return image!;
+  }
+
+  @override
+  Future<ListingSummary> summarizeListing({
+    required String pageText,
+    required String url,
+  }) async {
+    final s = summary;
+    if (s == null) throw const OpenAiException('no summary scripted');
+    return s;
+  }
+
+  @override
+  Future<PdfStructure> structurePdf({
+    required String rawPdfText,
+    List<PdfFormField> detectedFormFields = const [],
+  }) async {
+    final p = pdf;
+    if (p == null) throw const OpenAiException('no structure scripted');
+    return p;
+  }
+
+  @override
+  Future<ElementMatchResult> matchElement({
+    required String targetDescription,
+    required List<DomFormField> candidates,
+  }) async {
+    matchTargets.add(targetDescription);
+    final m = match;
+    if (m == null) throw const OpenAiException('no match scripted');
+    return m;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+const _tinyImage = [1, 2, 3];
 
 class FlowHarness {
   FlowHarness({
@@ -124,10 +232,15 @@ class FlowHarness {
     },
     String? pickerPath,
     String language = 'en',
+    this.ai,
+    bool wireSubmitHook = false,
   }) : tts = RecordingTts(),
        web = SpyWebView(),
        picker = StubFilePicker(pickerPath) {
-    fsm = ApplicationFlowFsm(performRealSubmit: () async => submitCalls++);
+    final hook = wireSubmitHook ? SubmitHook() : null;
+    fsm = ApplicationFlowFsm(
+      performRealSubmit: hook != null ? hook.run : () async => submitCalls++,
+    );
     controller = ApplicationFlowController(
       fsm: fsm,
       speech: ScriptedSpeech(script),
@@ -138,13 +251,35 @@ class FlowHarness {
       profileService: MemoryProfileService(profile),
       filePicker: picker,
       captchaHandler: CaptchaCheckpointHandler(web, tts),
+      openAi: ai,
+      imageFetcher: (url) async => FetchedImage(Uint8List.fromList(_tinyImage), 'image/png'),
+      submitHook: hook,
     );
   }
 
   final RecordingTts tts;
   final SpyWebView web;
   final StubFilePicker picker;
+  final FakeOpenAi? ai;
   late final ApplicationFlowFsm fsm;
   late final ApplicationFlowController controller;
   int submitCalls = 0;
 }
+
+/// A job listing with the given submit candidates, for submit-choice tests.
+DomSnapshot snapshotWithSubmit(List<DomFormField> submit) => DomSnapshot(
+  images: const [],
+  searchCandidates: const [],
+  submitCandidates: submit,
+  labeledFields: const [],
+  visibleText: 'text',
+  truncated: false,
+);
+
+/// A sample job listing for scripted summaries.
+const sampleListing = JobListing(
+  title: 'Flutter Developer',
+  company: 'Example Co',
+  requirements: '3 years Flutter',
+  howToApply: 'Fill in the form',
+);

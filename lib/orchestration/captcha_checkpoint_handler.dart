@@ -1,3 +1,5 @@
+import '../core/language.dart';
+import '../core/narration_lookup.dart';
 import '../services/tts_service.dart';
 import '../services/webview_controller_service.dart';
 import 'application_flow_fsm.dart';
@@ -15,13 +17,25 @@ import 'application_flow_fsm.dart';
 class CaptchaCheckpointHandler {
   final WebViewControllerService _webViewControllerService;
   final TtsService _ttsService;
+  final Future<String> Function()? _getLanguage;
 
-  CaptchaCheckpointHandler(this._webViewControllerService, this._ttsService);
+  /// [getLanguage] returns `'en'`/`'vi'`; without it the hand-off is
+  /// spoken in Vietnamese, the language of the verbatim string.
+  CaptchaCheckpointHandler(
+    this._webViewControllerService,
+    this._ttsService, {
+    Future<String> Function()? getLanguage,
+  }) : _getLanguage = getLanguage;
+
+  Future<FlowNarration> _narration() async =>
+      FlowNarration(await _getLanguage?.call() ?? AppLanguage.vi);
+
+  /// The hand-off line in the active language (also mirrored on screen).
+  Future<String> handOffText() async => (await _narration()).captchaHandOff;
 
   /// Exact narration string, quoted verbatim from `01-intent.md` §4 — do
   /// not rephrase.
-  static const String handOffNarration =
-      "Có CAPTCHA ở đây, bạn giải giúp tôi rồi nói 'tiếp tục' nhé";
+  static const String handOffNarration = captchaHandOffVi;
 
   static const String audioResolvedNarration =
       'Đã dùng tùy chọn âm thanh cho CAPTCHA';
@@ -38,12 +52,12 @@ class CaptchaCheckpointHandler {
     final resolvedViaAudio =
         await _webViewControllerService.tryResolveCaptchaViaAudio();
     if (resolvedViaAudio) {
-      await _ttsService.speak(audioResolvedNarration);
+      await _ttsService.speak((await _narration()).captchaAudioUsed);
       return true;
     }
 
     await fsm.transition(const CaptchaEncountered());
-    await _ttsService.speak(handOffNarration);
+    await _ttsService.speak(await handOffText());
     return true;
   }
 }

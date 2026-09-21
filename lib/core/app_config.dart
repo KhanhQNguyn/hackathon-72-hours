@@ -12,9 +12,14 @@ class AppConfig {
 
   /// The confirmed target platform (01-intent.md §5). The specific listing
   /// is still an open question (§7); replace when the team picks one.
-  static const String targetUrl = 'https://www.vietnamworks.com';
+  /// Override with `--dart-define=TARGET_URL=https://...` to point a run
+  /// at one specific listing page.
+  static const String targetUrl = String.fromEnvironment(
+    'TARGET_URL',
+    defaultValue: 'https://www.vietnamworks.com',
+  );
 
-  /// Placeholder PDF path for the flow; the real sample comes with the
-  /// listing decision (01-intent.md §7).
+  /// PDF path used by mocked runs. On a real run the user picks the file
+  /// (there is no listing-to-PDF link to follow yet, 01-intent.md §7).
   static const String applicationFormPdfPath = 'application_form.pdf';
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/language.dart';
+import '../../orchestration/application_flow_controller.dart';
 import '../../services/applicant_profile_service.dart';
 import '../../services/file_picker_service.dart';
 import '../../services/preferences_service.dart';
@@ -115,6 +116,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await context.read<PreferencesService>().setLanguagePref(code);
     if (!mounted) return;
     setState(() => _language = code);
+    // The home screen's status text follows the language too.
+    await context.read<ApplicationFlowController>().refreshLanguage();
   }
 
   Future<void> _pickCv() async {

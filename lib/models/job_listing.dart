@@ -13,4 +13,11 @@ class JobListing {
     required this.requirements,
     required this.howToApply,
   });
+
+  factory JobListing.fromJson(Map<String, dynamic> json) => JobListing(
+    title: (json['title'] as String?) ?? '',
+    company: (json['company'] as String?) ?? '',
+    requirements: (json['requirements'] as String?) ?? '',
+    howToApply: (json['howToApply'] as String?) ?? '',
+  );
 }
