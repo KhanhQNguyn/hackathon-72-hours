@@ -1,5 +1,5 @@
-import 'package:job_access_assist/models/pdf_form_field.dart';
-import 'package:job_access_assist/services/pdf_reader_service.dart';
+import '../models/pdf_form_field.dart';
+import '../services/pdf_reader_service.dart';
 
 /// Canned-content stand-in for `PdfReaderService` (milestone34).
 ///

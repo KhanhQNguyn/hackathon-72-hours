@@ -211,6 +211,10 @@ class ApplicationFlowFsm extends ChangeNotifier {
           _invalidTransition(event, current);
         }
 
+      // --- Abort / restart (milestone35) ---
+      case FlowReset():
+        _setState(const IdleState());
+
       // --- Checkpoint 3: CAPTCHA pause/resume (milestone13/14) ---
       case CaptchaEncountered():
         // Allowed from any state, mirroring ErrorOccurred — a CAPTCHA

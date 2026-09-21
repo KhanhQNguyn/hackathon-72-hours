@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:job_access_assist/models/captcha_check_result.dart';
-import 'package:job_access_assist/models/dom_snapshot.dart';
-import 'package:job_access_assist/models/fill_field_result.dart';
-import 'package:job_access_assist/services/webview_controller_service.dart';
+import '../models/captcha_check_result.dart';
+import '../models/dom_snapshot.dart';
+import '../models/fill_field_result.dart';
+import '../services/webview_controller_service.dart';
 
 /// Canned-content stand-in for `WebViewControllerService` so the FSM/UI
 /// can be exercised end-to-end without a real WebView (milestone34,

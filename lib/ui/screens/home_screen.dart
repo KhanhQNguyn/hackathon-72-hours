@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/narration_lookup.dart';
+import '../../orchestration/application_flow_controller.dart';
 import '../../orchestration/application_flow_fsm.dart';
 import '../widgets/status_narration_view.dart';
 import '../widgets/voice_trigger_button.dart';
@@ -23,9 +24,14 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Consumer<ApplicationFlowFsm>(
-                builder: (context, fsm, _) =>
-                    StatusNarrationView(text: narrationFor(fsm.state)),
+              // Mirrors the last spoken line; before anything has been said
+              // it falls back to the state's placeholder text.
+              Consumer2<ApplicationFlowFsm, ApplicationFlowController>(
+                builder: (context, fsm, controller, _) => StatusNarrationView(
+                  text: controller.lastNarration.isNotEmpty
+                      ? controller.lastNarration
+                      : narrationFor(fsm.state),
+                ),
               ),
               const SizedBox(height: 24),
               const VoiceTriggerButton(),

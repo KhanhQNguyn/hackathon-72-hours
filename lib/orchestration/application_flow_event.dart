@@ -110,3 +110,11 @@ class FieldSkippedNotFound extends ApplicationFlowEvent {
 
   const FieldSkippedNotFound(this.fieldId);
 }
+
+/// Returns the FSM to `IdleState` from any state — the user cancelled, or
+/// a finished/failed run is being restarted (milestone35). Without it
+/// `DoneState`/`ErrorState` would be dead ends and the trigger button
+/// could never start a second run.
+class FlowReset extends ApplicationFlowEvent {
+  const FlowReset();
+}

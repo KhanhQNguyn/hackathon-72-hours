@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'fake_pdf_reader_service.dart';
-import 'fake_webview_controller_service.dart';
+import 'package:job_access_assist/mocks/fake_pdf_reader_service.dart';
+import 'package:job_access_assist/mocks/fake_webview_controller_service.dart';
 
 void main() {
   test('milestone34 — fakes return canned content', () async {
