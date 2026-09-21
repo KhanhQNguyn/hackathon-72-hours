@@ -39,18 +39,34 @@
 
 ## 4. Core Features
 
+### Feature 1 — "AI Auto-Pilot" (must have — build first, fully)
+
+The end-to-end, voice-driven flow: search → read listing → fill form → submit. This is the primary MVP deliverable; every part below must be fully working, not partial.
+
 1. **AI image-to-speech for job descriptions posted as images** — detects when a job description has been posted as an image rather than text (the Brief's own named pattern on platforms like VietnamWorks, and on LinkedIn/employer uploads), extracts the image, runs it through a vision model, and reads the actual job description content aloud. Directly addresses barriers #3 and #4 above.
 2. **AI-filtered navigation/reading of inaccessible company websites and job portals** — reads the DOM of the portal/careers page the user is currently on, filters out navigation chrome/ads/irrelevant content, and surfaces and narrates the actual job-listing content (title, requirements, how to apply) in a logical order, even when the page's own semantic markup is poor. Directly addresses barrier #1.
 3. **PDF application form → structured, screen-reader-friendly text/speech** — parses a PDF application form's actual text/field structure and reads it back in a navigable, spoken form, rather than leaving the user to fight an untagged PDF with a generic reader. Directly addresses barrier #2.
-4. **Autonomous form-fill assistant for submitting applications, with step-by-step narration and a confirm checkpoint before final submit** — once the user has provided the needed information (verbally or from a saved profile), the app fills in the actual application form fields, narrating each step ("filling in your name," "filling in your phone number") the same way the old plan narrated cart/checkout steps. **This is the one moment analogous to the old "payment authorization" hard stop:** submitting a job application is a consequential, hard-to-undo action, so the app reads the completed form back in full and requires an explicit user confirmation before triggering the actual submit — never submits silently or automatically.
+4. **Autonomous form-fill assistant, field-by-field, with a confirm-before-submit checkpoint** — **redesigned from a single end-of-flow readback to a field-by-field confirm loop:** for each detected form field, the AI announces the field, offers a saved applicant-profile value if one exists ("use this value, or provide a new one?") or asks the user to provide one if not, gets the user's confirmation, *then* moves to the next field — making the flow self-correcting per field rather than relying on catching every mistake in one final readback. Once all fields are confirmed, the flow enters a lightweight **Final Review** summary (not a full re-read of every field from scratch, since each was already confirmed individually) — from which the user can say **"edit [field]"** at any point before submitting to re-collect and re-confirm just that one field, looping back to Final Review afterward rather than restarting the whole form. Submitting a job application is a consequential, hard-to-undo action, so the app never submits silently or automatically — only after explicit final confirmation (checkpoint #2 below).
 
-> **Excluded from scope, stated explicitly (not a 5th feature, not partially built):** AI screening-tool bias (behavior-clustering systems on the employer/vendor side) is not addressed by this product. See Section 1 for why — it's a third-party algorithmic problem outside a candidate-side app's technical reach, and attempting to evade it would be dishonest rather than helpful. This boundary is stated plainly in the deck, not glossed over.
+### Feature 2 — "Guided TalkBack Assist" (should have — build only after Feature 1's core loop works end-to-end against a real target, and only if time remains)
+
+A narrower, distinct feature, new on top of the original pivot: within the **same** embedded WebView session Feature 1 already uses, the user can ask the AI to locate an element on the current page (e.g. *"đưa tôi tới thanh tìm kiếm"* — "take me to the search bar"), and the AI calls `element.focus()` on it via the same JS-injection bridge Feature 1 relies on. The user's own already-running TalkBack then announces that element **natively** — because WebView content is exposed through Android's accessibility tree via the standard OS-level WebView-to-Chromium accessibility bridge, not through any separate mechanism this project builds. No swipe-counting, no separate `AccessibilityService`, no new architecture: this reuses Feature 1's WebView+JS stack 100%.
+
+**Feasibility caveat, stated plainly:** whether `.focus()` triggered via JS injection actually produces a real TalkBack announcement has **not yet been confirmed on a real device** — it needs its own small spike (see plan.md, task A1b), separate from Feature 1's DOM-reading spike (A1). If it fails, Feature 2 as designed doesn't work and needs rethinking — but Feature 1 is entirely unaffected either way, since Feature 2 is additive, not load-bearing for the MVP.
+
+### Three checkpoints (hard stops, across both features)
+
+1. **Selecting a company/listing** — the AI surfaces a match and the user confirms it's the right one before the flow proceeds.
+2. **Confirming before final submit** — now backed by Feature 1's field-by-field confirm loop, so this is a lighter final confirmation (the Final Review summary), not a full first-time readback of untouched data.
+3. **Encountering a CAPTCHA** — first try the CAPTCHA's own accessible audio-challenge option if the page offers one (many providers, including reCAPTCHA, ship this specifically for screen-reader users — using it is using an intended accessible path, not circumventing security). If no audio option exists, the flow stops and hands control to the user explicitly ("Có CAPTCHA ở đây, bạn giải giúp tôi rồi nói 'tiếp tục' nhé" — "There's a CAPTCHA here, please solve it and say 'continue'"), waiting for the user's resume command before proceeding. Same "hand back to the user at every human-verification step" principle as checkpoint #2, applied consistently — not a one-off exception.
+
+> **Excluded from scope, stated explicitly (not a feature, not partially built):** AI screening-tool bias (behavior-clustering systems on the employer/vendor side) is not addressed by this product. See Section 1 for why — it's a third-party algorithmic problem outside a candidate-side app's technical reach, and attempting to evade it would be dishonest rather than helpful. This boundary is stated plainly in the deck, not glossed over.
 
 ## 5. Constraints
 
 - **Time:** Submission deadline **7:00 AM Wed 23 Sep 2026** (72h from now). Team's unique submission link arrives 1:00 PM Day 2. Competition Brief released 9:00–10:00 AM Day 1 — this document reflects that Brief.
 - **Platform:** The core mechanism (in-app WebView + JavaScript DOM access, see spec.md §5) is inherently less platform-constrained than the old Android-`AccessibilityService`-only approach, since it doesn't depend on an OS-level accessibility API. That said, **the working prototype still targets Android first** for the same 72h reasons as before: existing team Android/Flutter tooling, no time to also validate an iOS build in this window. iOS may be shown only as a mockup/roadmap slide, not a working demo.
-- **Target app/flow:** Real job portals and PDF application forms — not Shopee. Scoped to **1–2 real platforms** the team tests against directly (e.g. **VietnamWorks** for an image-based job description, plus **one real company careers page** for portal navigation and its application form), rather than general/arbitrary job-site support. Exact platform(s)/listing(s) to be finalized once the team confirms which real examples reliably exhibit the barriers above (see Open Questions). General/arbitrary portal support is roadmap-only, not built.
+- **Target app/flow:** Real job portals and PDF application forms — not Shopee. **Target platform confirmed: VietnamWorks** (previously an open "1–2 platforms TBD" question — now decided). The specific job listing and PDF application-form sample to test against (ideally one linked from/associated with the chosen VietnamWorks listing) are still to be picked by the team (see Open Questions) — the platform itself is locked. General/arbitrary portal support beyond VietnamWorks is roadmap-only, not built.
 - **Engineering approach:** lean on AI coding assistants (e.g. Claude Code) for implementation velocity on the WebView/JS-bridge integration, PDF parsing, and AI matching/filtering logic. As before, the real bottleneck is empirical iteration against real third-party pages/PDFs (DOM quirks per site, PDF structure variance), not code-writing speed.
 - **Budget:** $0 (hackathon default) unless noted otherwise.
 - **Deliverables:** 1 slide deck (.pptx, official template, slides 1–6 fixed sequence, appendix from slide 7) + 1 video (<5 min, MP4/MOV, 16:9 landscape, slides visible) — both via team's unique submission link before 7:00 AM Day 3. No late submissions accepted.
@@ -62,23 +78,26 @@
 ## 6. Success Criteria
 
 - How do we know the MVP works?
-  1. **The recorded demo video runs cleanly end-to-end, covering all four features against at least one real job listing:** an image-based job description is read aloud, the portal/careers page is navigated and its listing content narrated, the PDF application form is read aloud, and the application is filled in and submitted with step-by-step narration and a confirm checkpoint before submit. This is a **pre-recorded video submission**, not a live demo during the Evaluation Round — so "no mistakes" means the final edited take is clean, achieved via multiple recording attempts if needed.
+  1. **The recorded demo video runs cleanly end-to-end, covering Feature 1's full loop against the real target listing:** an image-based job description is read aloud, the portal/careers page is navigated and its listing content narrated, the PDF application form is read aloud, and the application is filled in field-by-field (each field confirmed as it's filled) and submitted only after Final Review confirmation — with a clean handling of a CAPTCHA checkpoint if one appears. This is a **pre-recorded video submission**, not a live demo during the Evaluation Round — so "no mistakes" means the final edited take is clean, achieved via multiple recording attempts if needed.
   **Built-in robustness (not just retakes):** the flow should narrate and retry/recover from an unexpected page-load failure, PDF parse failure, or missing form field ("that didn't load as expected, retrying...") rather than silently breaking — same build principle as before, in case the team reaches the Grand Finale (top 8, Day 3 afternoon) and needs genuine live-demo resilience.
   2. **App is a working, installable Android APK** (sideload, not Play Store), runnable on any Android device for the demo recording and for Day 3 evaluators to try hands-on if they choose to.
-  3. **Real portal/PDF integration, scoped to 1–2 pre-tested real examples** (not fully general support) — each must reliably complete its part of the flow through repeated testing before recording. General/arbitrary portal or PDF support is explicitly **roadmap**, stated as such in the deck.
+  3. **Real portal/PDF integration against the confirmed VietnamWorks target** (not fully general support) — the chosen listing/PDF sample must reliably complete its part of the flow through repeated testing before recording. General/arbitrary portal or PDF support is explicitly **roadmap**, stated as such in the deck.
   4. **Deck + video together make the before/after contrast concrete** — paired with the measurable outcomes in Section 3 (time-to-complete-application, abandoned-attempt reduction vs. baseline), so impact is shown with a number, not just asserted.
 - A list of specific behaviors/scenarios that must run for it to count as "done":
   - [ ] App installs and launches on a clean Android device via APK
   - [ ] For the chosen real job listing: an image-based job description is detected and read aloud correctly
   - [ ] The chosen portal/careers page is navigated with irrelevant content filtered out, and the actual listing content is narrated
   - [ ] The chosen PDF application form is parsed and read back in a structured, navigable way
-  - [ ] The application form is filled in with step-by-step narration, the completed form is read back in full, and submission only happens after explicit user confirmation
-  - [ ] At least one take of the full flow recorded cleanly for the video
+  - [ ] The application form is filled in **field-by-field**, each field confirmed (saved-profile value accepted or a new value provided) before the next is attempted, reaching a Final Review summary that the user can request an edit against before submitting
+  - [ ] If a CAPTCHA is encountered: its audio-challenge option is tried first if offered, otherwise the flow narrates and hands control to the user, resuming only on an explicit "continue" command
+  - [ ] Submission only happens after explicit final confirmation at Final Review
+  - [ ] At least one take of the full flow recorded cleanly for the video, against the real VietnamWorks target
 
 ## 7. Open Questions
 
-- Which specific real job portal(s) and job listing(s) to test against — needs a pick known to have an image-based job description (per the Brief's own observation that this is common on platforms like VietnamWorks and LinkedIn), confirmed by the team before committing.
-- A real PDF application form sample to test against — needs sourcing (e.g. a real company's downloadable application PDF) before Workstream A's spike can run.
+- Which specific VietnamWorks job listing to test against — needs a pick known to have an image-based job description (per the Brief's own observation that this is common on VietnamWorks and LinkedIn). The platform itself is now locked (see Constraints); only the specific listing remains open.
+- A real PDF application form sample to test against — needs sourcing (ideally one linked from/associated with the chosen VietnamWorks listing) before Workstream A's spike can run.
+- **Does the "AI moves TalkBack focus to an element on request" mechanism (Feature 2) actually match how blind/low-vision users would want navigation help?** This was designed by team members without lived experience of screen-reader navigation patterns — it needs real validation with end-users at the Day 2 fireside chat, not assumption. Feature 2 shouldn't be treated as correct-by-design just because it's technically feasible (and its technical feasibility itself is still unconfirmed — see Feature 2's spike caveat in Section 4).
 - Is this primarily an efficiency/independence problem, or does it also touch a deeper barrier (confidence applying at all, fear of a botched application) worth naming in the pitch?
 - How do blind job seekers cope with these four barriers today, in their own words? (validate with end-users on Day 2 fireside chat, 9:00–10:00 AM)
 
@@ -123,4 +142,5 @@
 - [x] Solution Category: **Technological Solutions** (confirmed)
 - [ ] Team name, project name
 - [ ] Rubric weights/breakdown (Section 8) — fill in once published
-- [ ] Specific real job portal(s)/listing(s) and PDF application form sample to test against (Section 7)
+- [x] Target platform: **VietnamWorks** (confirmed)
+- [ ] Specific VietnamWorks job listing and PDF application-form sample to test against (Section 7)

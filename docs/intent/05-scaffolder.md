@@ -9,7 +9,7 @@ Read `intent.md` and `spec.md` in full before starting, so stub comments accurat
 ## Prerequisites (assumed already installed on the dev machine)
 
 - Flutter SDK (stable channel)
-- Android SDK + a connected/emulated Android device (min SDK 24+ recommended for a modern WebView/`webview_flutter` implementation)
+- Android SDK + a connected/emulated Android device (min SDK 24+ recommended for a modern WebView/`flutter_inappwebview` implementation)
 - JDK 17
 - Git
 
@@ -41,8 +41,12 @@ dependencies:
   shared_preferences: ^latest   # local state only — language pref, applicant profile, last search (spec.md §8)
   permission_handler: ^latest   # runtime mic permission
   provider: ^latest             # lightweight state management — FSM exposed via ChangeNotifier
-  webview_flutter: ^latest      # embedded WebView + JS injection/bridge for reading/acting on job portals (spec.md §1, §5)
-  syncfusion_flutter_pdf: ^latest  # PDF text/field extraction for application forms (spec.md §1) — TODO: confirm this is still the team's final pick per spec.md §"To fill in", swap for pdf_text if it isn't
+  flutter_inappwebview: ^latest  # embedded WebView + JS injection/bridge for reading/acting on VietnamWorks (spec.md §1, §5) — chosen over webview_flutter for origin-restricted WebMessageListener + AT_DOCUMENT_START UserScript injection timing, since the target is a real, uncontrolled third-party site
+  syncfusion_flutter_pdf: ^latest  # PDF text/field extraction for application forms (spec.md §1) — confirmed choice, not tentative
+  google_mlkit_text_recognition: ^latest  # on-device OCR fallback when a PDF application form has no extractable text layer (spec.md §1, §6)
+  file_picker: ^latest          # native CV file selection — JS injection cannot set <input type="file"> for security reasons (spec.md §1, §6)
+  sqflite: ^latest               # structured applicant profile (name, phone, email, CV file path) (spec.md §1, §8)
+  flutter_secure_storage: ^latest  # sensitive PII fields (email, phone) within the applicant profile (spec.md §1, §8)
 
 dev_dependencies:
   flutter_test:
@@ -65,16 +69,19 @@ lib/
 
   orchestration/
     application_flow_fsm.dart        # the FSM — states + transitions (spec.md §5 architecture note)
-    application_flow_state.dart      # sealed class / enum of FSM states
-    application_flow_event.dart      # events that trigger transitions
+    application_flow_state.dart      # sealed class / enum of FSM states, incl. FinalReview and EditingField(fieldId) (spec.md §5)
+    application_flow_event.dart      # events that trigger transitions, incl. field-confirmed and edit-field-requested events (spec.md §5)
 
   services/
     speech_service.dart              # wraps speech_to_text; n-best hypotheses + confidence (spec.md §6.1)
     tts_service.dart                 # wraps flutter_tts; narration calls
     openai_service.dart              # intent parsing, DOM/PDF content filtering, image-to-text, form-field matching (spec.md §1, §6)
-    webview_controller_service.dart  # Dart side of the WebView + JS-bridge (spec.md §5) — loads target page, runs injected JS, exposes DOM read/fill results
-    pdf_reader_service.dart          # wraps the chosen PDF library; extracts text/field structure from an application-form PDF (spec.md §1, §6)
-    preferences_service.dart         # SharedPreferences wrapper (spec.md §8)
+    webview_controller_service.dart  # Dart side of the WebView + JS-bridge, now backed by flutter_inappwebview (spec.md §5) — loads target page, runs injected JS (UserScript/WebMessageListener), exposes DOM read/fill results and Feature 2's focusElement(nodeRef) call
+    pdf_reader_service.dart          # wraps syncfusion_flutter_pdf; extracts text/field structure from an application-form PDF, falls back to ocr_service.dart when no text layer is found (spec.md §1, §6)
+    ocr_service.dart                 # wraps google_mlkit_text_recognition; OCR fallback used by pdf_reader_service.dart when a PDF has no extractable text layer (spec.md §1, §6)
+    file_picker_service.dart         # wraps file_picker; native CV file selection, since JS injection cannot set <input type="file"> (spec.md §1, §6)
+    applicant_profile_service.dart   # wraps sqflite + flutter_secure_storage; structured applicant profile (name, phone, email, CV file path), sensitive fields via secure storage (spec.md §1, §8) — split out from preferences_service.dart
+    preferences_service.dart         # SharedPreferences wrapper — simple settings only now: language pref, last search (spec.md §8)
     fuzzy_match_service.dart         # matches STT text / applicant-profile fields against detected form field labels (spec.md §6.1, §6)
 
   models/
@@ -101,7 +108,7 @@ assets/
 
 android/
   app/src/main/kotlin/com/adchackathon/<app_package>/
-    MainActivity.kt                          # standard Flutter entrypoint — no custom platform channel needed for WebView access (webview_flutter handles this)
+    MainActivity.kt                          # standard Flutter entrypoint — no custom platform channel needed for WebView access (flutter_inappwebview handles this)
 
   app/src/main/AndroidManifest.xml            # RECORD_AUDIO + INTERNET permissions
 
@@ -145,7 +152,7 @@ In `AndroidManifest.xml`, add:
 - `<uses-permission android:name="android.permission.RECORD_AUDIO" />`
 - `<uses-permission android:name="android.permission.INTERNET" />`
 
-No custom `<service>` registration or accessibility-service config is needed — the WebView is hosted directly by the app via `webview_flutter`, so there's no OS-level accessibility permission to request for reading the target page's content (unlike the old `AccessibilityService` approach). `assets/js/dom_reader.js` and `assets/js/form_filler.js` (Step 3) should be registered in `pubspec.yaml`'s `flutter: assets:` list so they can be loaded and injected via `WebViewController.runJavaScript`/`runJavaScriptReturningResult`.
+No custom `<service>` registration or accessibility-service config is needed — the WebView is hosted directly by the app via `flutter_inappwebview`, so there's no OS-level accessibility permission to request for reading the target page's content (unlike the old `AccessibilityService` approach). `flutter_inappwebview` needs no Android manifest permissions beyond `INTERNET` (already listed above) — confirmed, no addition needed over what `webview_flutter` required. `assets/js/dom_reader.js` and `assets/js/form_filler.js` (Step 3) should be registered in `pubspec.yaml`'s `flutter: assets:` list so they can be loaded and injected as `UserScript`s.
 
 ## Step 6 — Secrets handling
 
@@ -176,7 +183,8 @@ After scaffolding, confirm:
 ## What NOT to do in this pass
 
 - Do not implement the FSM's actual transition logic
-- Do not implement the real WebView/JS-bridge DOM-reading or form-filling logic, or the real PDF-parsing logic — that's the spike (plan.md Workstream A1), done as its own focused session, not folded into scaffolding
+- Do not implement the real WebView/JS-bridge DOM-reading or form-filling logic, or the real PDF-parsing logic — that's the spike (plan.md Workstream A1/A1b), done as its own focused session, not folded into scaffolding
+- Do not implement the CAPTCHA-detection heuristic or the OCR fallback trigger logic yet — these are real build tasks (plan.md Workstream A8, B1b), not scaffolding
 - Do not write real OpenAI prompt content yet — stub the method signature only
 - Do not add UI polish/styling beyond what's needed to confirm the app compiles and is navigable
 
