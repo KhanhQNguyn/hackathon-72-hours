@@ -47,6 +47,7 @@ dependencies:
   file_picker: ^latest          # native CV file selection — JS injection cannot set <input type="file"> for security reasons (spec.md §1, §6)
   sqflite: ^latest               # structured applicant profile (name, phone, email, CV file path) (spec.md §1, §8)
   flutter_secure_storage: ^latest  # sensitive PII fields (email, phone) within the applicant profile (spec.md §1, §8)
+  flutter_dotenv: ^latest        # loads OPENAI_API_KEY from the bundled .env asset at runtime (spec.md §2-§3) — chosen over --dart-define; see milestones/milestone03-secrets-env-setup.md for why. Requires ".env" listed under flutter: assets: in this file (Step 5).
 
 dev_dependencies:
   flutter_test:
@@ -156,9 +157,10 @@ No custom `<service>` registration or accessibility-service config is needed —
 
 ## Step 6 — Secrets handling
 
-- Create a `.env` file (or `android/local.properties` entry) for `OPENAI_API_KEY` — **do not hardcode it in any `.dart` or `.kt` file**
-- Add `.env` (or `local.properties`, if not already) to `.gitignore`
+- Create a `.env` file for `OPENAI_API_KEY` — **do not hardcode it in any `.dart` or `.kt` file**
+- Add `.env` to `.gitignore`
 - Add a `.env.example` with `OPENAI_API_KEY=` (empty) so teammates know the variable name without the real key ever touching Git
+- **Loading mechanism, confirmed (milestone03):** `flutter_dotenv`, called via `await dotenv.load(fileName: '.env')` in `main.dart` before `runApp()`. This requires `.env` to be listed under `pubspec.yaml`'s `flutter: assets:` (alongside the two JS files from Step 3/5) — the file is bundled into the built APK as a plain asset, which is consistent with the already-accepted "key ships in the built APK" risk below, not a new one.
 - This is the mitigation for the client-side-key risk flagged in spec.md §3 — it doesn't fix the fundamental issue (key still ships in the built APK) but it does stop it from leaking via the Git repo, which is the more immediate risk for a team pushing to GitHub during a hackathon
 
 ## Step 7 — Git

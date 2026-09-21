@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script>
+    // Simulates AT_DOCUMENT_START injection timing: this script runs
+    // before <body> exists, exactly like the real UserScript injection.
+    window.jobAccessAssistBridge = {
+      postMessage: function (msg) {
+        console.log('M12_TIMING_BRIDGE_MESSAGE:' + msg);
+      },
+    };
+  </script>
+  <script src="../../assets/js/dom_reader.js"></script>
+</head>
+<body>
+<div id="content">initial</div>
+<script>
+  // dom_reader.js ran synchronously inside <head>, before this <body>
+  // content was parsed — document.body was necessarily null at that
+  // point (HTML parsing guarantees this), so a successful bridge message
+  // below proves the DOMContentLoaded fallback path in
+  // __domReader_attachMutationObserver actually attached the observer.
+  setTimeout(function () {
+    var span = document.createElement('span');
+    span.textContent = 'added after load';
+    document.body.appendChild(span);
+  }, 50);
+</script>
+</body>
+</html>

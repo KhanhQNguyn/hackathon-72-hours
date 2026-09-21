@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html><body>
+<img id="a" src="a.png" alt="A real product photo">
+<img id="b" src="b.png" alt="">
+<img id="c" src="c.png">
+<script src="../../assets/js/dom_reader.js"></script>
+<script>
+  var result = JSON.parse(window.__domReader_getImages());
+  var pass = result.length === 3 &&
+    result[0].hasAlt === true &&
+    result[1].hasAlt === false &&
+    result[2].hasAlt === false;
+  console.log('M09_RESULT:' + JSON.stringify(result));
+  console.log('M09_PASS:' + pass);
+</script>
+</body></html>

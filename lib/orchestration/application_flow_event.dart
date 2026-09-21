@@ -25,9 +25,15 @@ class ContentRead extends ApplicationFlowEvent {
   const ContentRead();
 }
 
-/// Checkpoint 1 — selecting a company/listing.
+/// Checkpoint 1 — selecting a company/listing. Carries the ordered list
+/// of detected field ids to fill next (milestone04 decision: this is how
+/// the field list reaches `FillingFormState` — the real source of this
+/// list is the DOM-reading layer, milestone09+). An empty list means the
+/// form has no fields to fill; the FSM skips straight to `FinalReview`.
 class ListingConfirmed extends ApplicationFlowEvent {
-  const ListingConfirmed();
+  final List<String> fieldIds;
+
+  const ListingConfirmed(this.fieldIds);
 }
 
 /// Fired once per field in the field-by-field confirm loop (spec.md
@@ -71,10 +77,16 @@ class SubmitConfirmed extends ApplicationFlowEvent {
   const SubmitConfirmed();
 }
 
+/// `retryAction`, if supplied, lets the FSM attempt exactly one automatic
+/// retry (via `RetryingState`) before settling into `ErrorState` —
+/// opt-in per call site (milestone08), since not every failure should be
+/// auto-retried (e.g. milestone24's "field not found" case is skipped,
+/// not retried). Returns `true` on success, `false`/throws on failure.
 class ErrorOccurred extends ApplicationFlowEvent {
   final String message;
+  final Future<bool> Function()? retryAction;
 
-  const ErrorOccurred(this.message);
+  const ErrorOccurred(this.message, {this.retryAction});
 }
 
 class RetryRequested extends ApplicationFlowEvent {

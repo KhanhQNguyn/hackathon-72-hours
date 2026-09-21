@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html><body>
+<div id="content">short text</div>
+<script>
+  // Mock the WebMessageListener bridge before dom_reader.js runs, so we
+  // can observe when the MutationObserver's debounced callback fires.
+  window.jobAccessAssistBridge = {
+    postMessage: function (msg) {
+      console.log('M12_BRIDGE_MESSAGE:' + msg);
+    },
+  };
+</script>
+<script src="../../assets/js/dom_reader.js"></script>
+<script>
+  // --- Visible text + truncation ---
+  var shortResult = JSON.parse(window.__domReader_getVisibleText());
+  var shortPass = shortResult.truncated === false && shortResult.text.indexOf('short text') !== -1;
+  console.log('M12_SHORT_PASS:' + shortPass);
+
+  document.getElementById('content').innerText = 'x'.repeat(9000);
+  var longResult = JSON.parse(window.__domReader_getVisibleText());
+  var longPass = longResult.truncated === true && longResult.text.length === 8000;
+  console.log('M12_LONG_PASS:' + longPass);
+
+  // --- MutationObserver -> bridge round trip ---
+  setTimeout(function () {
+    var span = document.createElement('span');
+    span.textContent = 'dynamically added';
+    document.body.appendChild(span);
+  }, 50);
+</script>
+</body></html>

@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html><body>
+<button type="submit" id="b1">Ứng tuyển</button>
+<button id="b2">Cancel</button>
+<a href="#" id="b3">Home</a>
+<script src="../../assets/js/dom_reader.js"></script>
+<script>
+  var result = JSON.parse(window.__domReader_getSubmitCandidates());
+  var ids = result.map(function(r) {
+    return document.querySelector('[data-app-node-id="' + r.elementId + '"]').id;
+  });
+  var pass = result.length === 1 && ids[0] === 'b1' && result[0].heuristicScore === 100;
+  console.log('M11_SUBMIT_RESULT:' + JSON.stringify(result));
+  console.log('M11_SUBMIT_IDS:' + JSON.stringify(ids));
+  console.log('M11_SUBMIT_PASS:' + pass);
+</script>
+</body></html>

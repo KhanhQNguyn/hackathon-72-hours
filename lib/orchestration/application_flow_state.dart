@@ -38,11 +38,31 @@ class AwaitingUserActionState extends ApplicationFlowState {
 /// The field-by-field confirm loop (spec.md §5, §6 "Form-Fill
 /// Orchestrator"): does not advance to `FinalReviewState` until every
 /// detected field has been individually confirmed. `currentFieldId`
-/// tracks which field is currently being announced/confirmed.
+/// tracks which field is currently being announced/confirmed;
+/// `remainingFieldIds` is the ordered queue of fields still to process
+/// after the current one (milestone04).
 class FillingFormState extends ApplicationFlowState {
   final String currentFieldId;
+  final List<String> remainingFieldIds;
 
-  const FillingFormState(this.currentFieldId);
+  const FillingFormState(this.currentFieldId, this.remainingFieldIds);
+
+  @override
+  bool operator ==(Object other) =>
+      other is FillingFormState &&
+      other.currentFieldId == currentFieldId &&
+      _listEquals(other.remainingFieldIds, remainingFieldIds);
+
+  @override
+  int get hashCode => Object.hash(currentFieldId, Object.hashAll(remainingFieldIds));
+}
+
+bool _listEquals(List<String> a, List<String> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }
 
 /// Lightweight summary state — not necessarily a full re-read of every
@@ -60,6 +80,13 @@ class EditingFieldState extends ApplicationFlowState {
   final String fieldId;
 
   const EditingFieldState(this.fieldId);
+
+  @override
+  bool operator ==(Object other) =>
+      other is EditingFieldState && other.fieldId == fieldId;
+
+  @override
+  int get hashCode => fieldId.hashCode;
 }
 
 /// Checkpoint 2 (confirm before final submit) and checkpoint 3 (CAPTCHA
@@ -81,6 +108,15 @@ class ErrorState extends ApplicationFlowState {
   final String message;
 
   const ErrorState({required this.failedState, required this.message});
+
+  @override
+  bool operator ==(Object other) =>
+      other is ErrorState &&
+      other.failedState == failedState &&
+      other.message == message;
+
+  @override
+  int get hashCode => Object.hash(failedState, message);
 }
 
 class RetryingState extends ApplicationFlowState {

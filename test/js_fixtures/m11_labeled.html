@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html><body>
+<label for="l1">Full name</label><input id="l1" type="text">
+<input id="l2" type="text" placeholder="Email address">
+Phone number: <input id="l3" type="text">
+<script src="../../assets/js/dom_reader.js"></script>
+<script>
+  var result = JSON.parse(window.__domReader_getLabeledFields());
+  var byId = {};
+  result.forEach(function(r) {
+    var domId = document.querySelector('[data-app-node-id="' + r.elementId + '"]').id;
+    byId[domId] = r;
+  });
+  var pass = result.length === 3 &&
+    byId['l1'].labelSource === 'label_for' && byId['l1'].resolvedLabel === 'Full name' &&
+    byId['l2'].labelSource === 'placeholder' && byId['l2'].resolvedLabel === 'Email address' &&
+    byId['l3'].labelSource === 'sibling_text' && byId['l3'].resolvedLabel === 'Phone number:';
+  console.log('M11_LABELED_RESULT:' + JSON.stringify(result));
+  console.log('M11_LABELED_BYID:' + JSON.stringify(byId));
+  console.log('M11_LABELED_PASS:' + pass);
+</script>
+</body></html>

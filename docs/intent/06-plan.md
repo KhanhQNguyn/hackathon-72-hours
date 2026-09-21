@@ -112,3 +112,19 @@ Going through each workstream and asking honestly where this plan still leans on
 - **Mostly yes, with gaps patched above rather than left implicit:** (1) the target platform (VietnamWorks) is now locked, but the exact listing/PDF sample aren't actually known yet — this is stated explicitly as an Open Question (intent.md §7) with an explicit spike (A1, plus the independent A1b for Feature 2) to confirm feasibility before committing, rather than assumed; (2) file paths and class names are given concretely (from scaffolder.md) rather than referenced abstractly; (3) the FSM's actual state names and transition examples are spelled out in the Success Proof section, not just referenced by name.
 - **Residual gap, worth naming rather than hiding:** the exact narration wording (C3) and the final choice of listing/PDF within VietnamWorks are explicitly left as decisions to make *once real data exists* (post-A1) — a different engineer couldn't write final narration copy or commit to a specific listing from this plan alone, but that's intentional: committing to either before knowing what the real DOM/PDF actually looks like would be guessing, not planning.
 - **One more implicit dependency:** confidence thresholds (STT gating, fuzzy-match similarity cutoff) are given as starting values ("start at 0.6, tune empirically") rather than fixed constants — a different engineer would need to actually run the app to tune these, which is unavoidable for values that depend on real device/mic/network behavior.
+
+## Post-Build Audit
+
+Implementation milestones for every task above are tracked as individual
+files in `intent/milestones/` (see `00-index.md` for the full sequence).
+Once every milestone file is marked complete, this file — every
+workstream task's checkbox and the "Success proof" section above — is the
+final audit checklist. Go through each checkbox again at that point and
+verify it against the actual finished app, not against the assumption
+that finishing all milestones automatically satisfies it. A milestone
+being "done" (its own Definition of Done met) is a necessary but not
+automatically sufficient condition for the task/criterion it maps to
+here — some checkboxes (e.g. anything involving repeated real-device
+testing, or judgment calls like "narration sounds natural") can only be
+honestly checked by actually using the finished app, not by tracing which
+milestone files touched that area.

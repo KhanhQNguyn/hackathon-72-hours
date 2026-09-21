@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html><body>
+<input id="s1" type="search">
+<input id="s2" type="text" placeholder="Tìm kiếm việc làm">
+<div role="search"><span><input id="s3" type="text"></span></div>
+<input id="s4" type="text" placeholder="First name">
+<div role="search"><div><div><input id="s5" type="text"></div></div></div>
+<script src="../../assets/js/dom_reader.js"></script>
+<script>
+  var result = JSON.parse(window.__domReader_getSearchCandidates());
+  var ids = result.map(function(r) { return r.elementId; });
+  var tags = result.map(function(r) {
+    return document.querySelector('[data-app-node-id="' + r.elementId + '"]').id;
+  });
+  // s3 is role="search" 2 levels up (input -> span -> div[role=search]) —
+  // must match. s5 is 3 levels up — must NOT match (beyond the "within 2
+  // levels" rule). s4 is unrelated — must NOT match.
+  var pass = result.length === 3 &&
+    tags.indexOf('s4') === -1 &&
+    tags.indexOf('s5') === -1 &&
+    tags.indexOf('s1') !== -1 &&
+    tags.indexOf('s2') !== -1 &&
+    tags.indexOf('s3') !== -1 &&
+    result[0].heuristicScore >= result[1].heuristicScore &&
+    result[1].heuristicScore >= result[2].heuristicScore;
+  // Every candidate has a live data-app-node-id attribute
+  var allTagged = result.every(function(r) {
+    return document.querySelector('[data-app-node-id="' + r.elementId + '"]') !== null;
+  });
+  console.log('M10_RESULT:' + JSON.stringify(result));
+  console.log('M10_TAGS:' + JSON.stringify(tags));
+  console.log('M10_PASS:' + (pass && allTagged));
+</script>
+</body></html>
