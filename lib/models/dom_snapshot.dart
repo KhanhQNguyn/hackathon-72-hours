@@ -25,6 +25,11 @@ class DomSnapshot {
   /// True if `visibleText` was truncated to fit the cap.
   final bool truncated;
 
+  /// Checkpoint 3 — whether a CAPTCHA was detected on this perception
+  /// pass, and by which provider heuristic (milestone13).
+  final bool captchaDetected;
+  final String? captchaProvider;
+
   const DomSnapshot({
     required this.images,
     required this.searchCandidates,
@@ -32,6 +37,8 @@ class DomSnapshot {
     required this.labeledFields,
     required this.visibleText,
     required this.truncated,
+    this.captchaDetected = false,
+    this.captchaProvider,
   });
 }
 

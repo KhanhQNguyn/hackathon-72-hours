@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html><body>
+<input id="controlled" data-app-node-id="n1" type="text">
+<script>
+  // Simulates a React/Vue-style controlled input: an instance-level
+  // property override that immediately reverts any assignment made via
+  // the plain `el.value = x` syntax back to a "controlled" shadow value
+  // — exactly the failure mode form_filler.js's native-setter technique
+  // exists to survive. Calling the PROTOTYPE's own setter function
+  // directly (`.set.call(el, value)`, what form_filler.js does) bypasses
+  // this instance-level override entirely, since native accessor
+  // functions mutate the element's internal slot directly rather than
+  // going back through JS property lookup on the instance.
+  var el = document.getElementById('controlled');
+  var nativeDescriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+  var shadowValue = '';
+  Object.defineProperty(el, 'value', {
+    get: function () { return nativeDescriptor.get.call(this); },
+    set: function (v) { nativeDescriptor.set.call(this, shadowValue); },
+    configurable: true,
+  });
+</script>
+<script src="../../assets/js/form_filler.js"></script>
+<script>
+  // Part 1 — negative control: confirm the simulated controlled input
+  // actually reverts a NAIVE assignment (validates the fixture itself,
+  // per milestone15's explicit "prove the test is meaningful" ask).
+  el.value = 'naive attempt';
+  var naiveWorked = el.value === 'naive attempt';
+  console.log('M15_NEGATIVE_CONTROL_NAIVE_WORKED:' + naiveWorked);
+
+  // Part 2 — the real assertion: form_filler.js's native-setter
+  // technique must survive the same controlled-input simulation, where
+  // naive assignment (just proven above) does not.
+  var setResult = JSON.parse(window.__formFiller_setValue('n1', 'real value'));
+  var actualValue = el.value;
+  var pass = naiveWorked === false && setResult.success === true && actualValue === 'real value';
+  console.log('M15_NEGATIVE_CONTROL_RESULT:' + JSON.stringify({ setResult: setResult, actualValue: actualValue }));
+  console.log('M15_NEGATIVE_CONTROL_PASS:' + pass);
+</script>
+</body></html>

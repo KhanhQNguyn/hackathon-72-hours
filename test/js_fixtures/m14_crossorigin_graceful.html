@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html><body>
+<p>No same-origin audio button anywhere on this page.</p>
+<iframe src="https://www.google.com/recaptcha/api2/anchor?fake=1" style="width:300px;height:78px;border:0;"></iframe>
+<script src="../../assets/js/dom_reader.js"></script>
+<script>
+  // Must not throw, must gracefully report clicked:false, since the
+  // iframe above is genuinely cross-origin and its contentDocument is
+  // inaccessible per same-origin policy.
+  try {
+    var result = JSON.parse(window.__domReader_findAndClickAudioChallengeButton());
+    var pass = result.clicked === false;
+    console.log('M14_CROSSORIGIN_RESULT:' + JSON.stringify(result));
+    console.log('M14_CROSSORIGIN_PASS:' + pass);
+  } catch (e) {
+    console.log('M14_CROSSORIGIN_PASS:false (threw: ' + e + ')');
+  }
+</script>
+</body></html>

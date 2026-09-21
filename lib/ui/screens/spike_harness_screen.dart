@@ -204,6 +204,15 @@ class _SpikeHarnessScreenState extends State<SpikeHarnessScreen> {
                     onLoadStop: (controller, url) {
                       _webViewControllerService.notifyLoadStop();
                     },
+                    onReceivedError: (controller, request, error) {
+                      // Sub-resource failures (a blocked ad/tracker
+                      // script, a broken image) are not full page-load
+                      // failures — only propagate main-frame errors
+                      // (milestone22).
+                      if (request.isForMainFrame ?? true) {
+                        _webViewControllerService.notifyLoadError(error.description);
+                      }
+                    },
                   ),
           ),
           Padding(

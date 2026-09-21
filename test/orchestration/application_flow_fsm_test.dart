@@ -1,9 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:job_access_assist/orchestration/application_flow_fsm.dart';
+import 'package:job_access_assist/services/page_load_exception.dart';
+import 'package:job_access_assist/services/pdf_parse_exception.dart';
 
 // Unit tests for FSM state transitions, per spec.md §5 (testable without
-// a live phone/mic/network). Covers milestones 04-08.
+// a live phone/mic/network). Covers milestones 04-08, 13-14, 21, 22, 23,
+// 24.
 void main() {
   group('milestone04 — contracts + linear front-half transitions', () {
     test('FSM starts in IdleState', () {
@@ -369,4 +372,189 @@ void main() {
       expect(fsm.state, isA<IdleState>());
     });
   });
+
+  group('milestone13/14 — CAPTCHA checkpoint (pause/resume)', () {
+    test(
+      'CaptchaEncountered from FillingFormState wraps it exactly, '
+      'CaptchaResolved returns to it exactly',
+      () async {
+        final fsm = ApplicationFlowFsm();
+        await fsm.transition(const TriggerPressed());
+        await fsm.transition(const VoiceCommandRecognized('x'));
+        await fsm.transition(const IntentParsed());
+        await fsm.transition(const TargetLoaded());
+        await fsm.transition(const ContentRead());
+        await fsm.transition(const ListingConfirmed(['phone', 'email']));
+        expect(fsm.state, const FillingFormState('phone', ['email']));
+
+        await fsm.transition(const CaptchaEncountered());
+        expect(
+          fsm.state,
+          const CaptchaPendingState(
+            interruptedState: FillingFormState('phone', ['email']),
+          ),
+        );
+
+        await fsm.transition(const CaptchaResolved());
+        expect(fsm.state, const FillingFormState('phone', ['email']));
+      },
+    );
+
+    test('CaptchaEncountered is allowed from any state (e.g. Idle)', () async {
+      final fsm = ApplicationFlowFsm();
+      await fsm.transition(const CaptchaEncountered());
+      expect(fsm.state, const CaptchaPendingState(interruptedState: IdleState()));
+    });
+
+    test('CaptchaResolved outside CaptchaPendingState is a no-op', () async {
+      final fsm = ApplicationFlowFsm();
+      await fsm.transition(const CaptchaResolved());
+      expect(fsm.state, isA<IdleState>());
+    });
+  });
+
+  group('milestone21 — field-type threading for the file-picker branch', () {
+    test('ListingConfirmed carries fieldTypes into FillingFormState', () async {
+      final fsm = ApplicationFlowFsm();
+      await fsm.transition(const TriggerPressed());
+      await fsm.transition(const VoiceCommandRecognized('x'));
+      await fsm.transition(const IntentParsed());
+      await fsm.transition(const TargetLoaded());
+      await fsm.transition(const ContentRead());
+      await fsm.transition(
+        const ListingConfirmed(
+          ['cv', 'phone'],
+          fieldTypes: {'cv': 'file', 'phone': 'text'},
+        ),
+      );
+
+      final state = fsm.state as FillingFormState;
+      expect(state.currentFieldId, 'cv');
+      expect(state.currentFieldType, 'file');
+    });
+
+    test('fieldTypes survives advancing to the next field', () async {
+      final fsm = ApplicationFlowFsm();
+      await fsm.transition(const TriggerPressed());
+      await fsm.transition(const VoiceCommandRecognized('x'));
+      await fsm.transition(const IntentParsed());
+      await fsm.transition(const TargetLoaded());
+      await fsm.transition(const ContentRead());
+      await fsm.transition(
+        const ListingConfirmed(
+          ['cv', 'phone'],
+          fieldTypes: {'cv': 'file', 'phone': 'text'},
+        ),
+      );
+
+      await fsm.transition(const FieldConfirmed('cv'));
+
+      final state = fsm.state as FillingFormState;
+      expect(state.currentFieldId, 'phone');
+      expect(state.currentFieldType, 'text');
+    });
+  });
+
+  group('milestone24 — field-not-found skip (distinct from FieldConfirmed)', () {
+    test('FieldSkippedNotFound advances the loop like FieldConfirmed', () async {
+      final fsm = ApplicationFlowFsm();
+      await fsm.transition(const TriggerPressed());
+      await fsm.transition(const VoiceCommandRecognized('x'));
+      await fsm.transition(const IntentParsed());
+      await fsm.transition(const TargetLoaded());
+      await fsm.transition(const ContentRead());
+      await fsm.transition(const ListingConfirmed(['phone', 'email']));
+
+      await fsm.transition(const FieldSkippedNotFound('phone'));
+      expect(fsm.state, const FillingFormState('email', []));
+    });
+
+    test(
+      'FieldSkippedNotFound on the last field moves to FinalReview, '
+      'never ErrorState',
+      () async {
+        final fsm = ApplicationFlowFsm();
+        await fsm.transition(const TriggerPressed());
+        await fsm.transition(const VoiceCommandRecognized('x'));
+        await fsm.transition(const IntentParsed());
+        await fsm.transition(const TargetLoaded());
+        await fsm.transition(const ContentRead());
+        await fsm.transition(const ListingConfirmed(['phone']));
+
+        await fsm.transition(const FieldSkippedNotFound('phone'));
+        expect(fsm.state, isA<FinalReviewState>());
+      },
+    );
+
+    test('FieldSkippedNotFound with the wrong field id is a no-op', () async {
+      final fsm = ApplicationFlowFsm();
+      await fsm.transition(const TriggerPressed());
+      await fsm.transition(const VoiceCommandRecognized('x'));
+      await fsm.transition(const IntentParsed());
+      await fsm.transition(const TargetLoaded());
+      await fsm.transition(const ContentRead());
+      await fsm.transition(const ListingConfirmed(['phone', 'email']));
+
+      await fsm.transition(const FieldSkippedNotFound('email')); // wrong — current is 'phone'
+      expect(fsm.state, const FillingFormState('phone', ['email']));
+    });
+  });
+
+  group(
+    'milestone22/23 — page-load and PDF-parse failures route through '
+    'Error/Retrying, not a parallel path',
+    () {
+      test(
+        'ErrorState(failedState: FillingFormState) + RetryRequested '
+        'returns to that exact FillingFormState, not Idle',
+        () async {
+          final fsm = ApplicationFlowFsm();
+          await fsm.transition(const TriggerPressed());
+          await fsm.transition(const VoiceCommandRecognized('x'));
+          await fsm.transition(const IntentParsed());
+          await fsm.transition(const TargetLoaded());
+          await fsm.transition(const ContentRead());
+          await fsm.transition(
+            const ListingConfirmed(['phone', 'email', 'cv']),
+          );
+          expect(fsm.state, const FillingFormState('phone', ['email', 'cv']));
+
+          // Simulates a caller catching PageLoadException/PdfParseException
+          // mid-fill and reporting it generically — milestone22/23's point
+          // is that there is no separate handling per failure source.
+          await fsm.transition(
+            const ErrorOccurred("that didn't load as expected, retrying..."),
+          );
+          expect(fsm.state, isA<ErrorState>());
+
+          await fsm.transition(const RetryRequested());
+          expect(fsm.state, const FillingFormState('phone', ['email', 'cv']));
+        },
+      );
+
+      test(
+        'PageLoadException carries the exact narration string from '
+        '02-spec.md §3',
+        () {
+          const exception = PageLoadException(
+            "that didn't load as expected, retrying...",
+          );
+          expect(
+            exception.message,
+            "that didn't load as expected, retrying...",
+          );
+        },
+      );
+
+      test(
+        'PdfParseException is a distinct type from PageLoadException but '
+        'both are plain Exceptions callers can route into ErrorOccurred',
+        () {
+          const exception = PdfParseException('could not read this PDF');
+          expect(exception, isA<Exception>());
+          expect(exception.message, 'could not read this PDF');
+        },
+      );
+    },
+  );
 }

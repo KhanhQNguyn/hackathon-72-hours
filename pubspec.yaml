@@ -43,6 +43,7 @@ dependencies:
   flutter_inappwebview: ^6.1.5 # embedded WebView + JS injection/bridge for reading/acting on the target job portal (spec.md §1, §5) — chosen over webview_flutter for origin-restricted WebMessageListener + AT_DOCUMENT_START UserScript injection timing, since the target is a real, uncontrolled third-party site
   syncfusion_flutter_pdf: ^34.2.8 # PDF text/field extraction for application forms (spec.md §1) — confirmed choice, not tentative
   google_mlkit_text_recognition: ^0.16.0 # on-device OCR fallback when a PDF application form has no extractable text layer (spec.md §1, §6)
+  pdfx: ^2.9.2 # headless PDF-page-to-image rasterization for the OCR fallback (spec.md §1, §6, milestone20) — chosen over rendering via flutter_inappwebview because PdfReaderService is a plain service with no widget/BuildContext to host an off-screen WebView; a third PDF dependency, but the only headless option available
   file_picker: ^13.1.0 # native CV file selection — JS injection cannot set <input type="file"> for security reasons (spec.md §1, §6)
   sqflite: ^2.4.2+1 # structured applicant profile (name, phone, email, CV file path) (spec.md §1, §8)
   flutter_secure_storage: ^11.2.0 # sensitive PII fields (email, phone) within the applicant profile (spec.md §1, §8)

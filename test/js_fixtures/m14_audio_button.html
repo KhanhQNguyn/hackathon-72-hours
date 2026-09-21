@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html><body>
+<button id="audioBtn" aria-label="Get an audio challenge" style="width:40px;height:40px;">🔊</button>
+<script src="../../assets/js/dom_reader.js"></script>
+<script>
+  document.getElementById('audioBtn').addEventListener('click', function () {
+    console.log('M14_BUTTON_CLICKED:true');
+  });
+  var result = JSON.parse(window.__domReader_findAndClickAudioChallengeButton());
+  var pass = result.clicked === true;
+  console.log('M14_SAMEORIGIN_RESULT:' + JSON.stringify(result));
+  console.log('M14_SAMEORIGIN_PASS:' + pass);
+</script>
+</body></html>

@@ -13,8 +13,26 @@ export 'application_flow_state.dart';
 /// FillingForm(perFieldConfirmLoop) -> FinalReview ->
 /// [EditingField(fieldId) -> FinalReview]* -> AwaitingSubmitConfirmation
 /// -> Done`, with `Error`/`Retrying` transitions back to the state that
-/// failed. Exposed as a `ChangeNotifier` so the UI layer reacts to state
-/// changes automatically (spec.md §5, layered architecture note).
+/// failed, and `CaptchaPending` (milestone14) pausing/resuming any state.
+/// Exposed as a `ChangeNotifier` so the UI layer reacts to state changes
+/// automatically (spec.md §5, layered architecture note).
+///
+/// `ErrorOccurred` is fired by whatever caller catches a recoverable
+/// failure — e.g. a `PageLoadException` from `WebViewControllerService`
+/// (milestone22) or a `PdfParseException` from `PdfReaderService`
+/// (milestone23) both route through the same generic `ErrorState`/
+/// `RetryingState` machinery built in milestone08; this class has no
+/// separate handling per failure source, by design.
+///
+/// `FillingFormState.currentFieldType` (milestone21) is how a future
+/// per-field-loop orchestrator — not this class, which stays pure Dart
+/// with no platform calls, mirroring `CaptchaCheckpointHandler` — decides
+/// whether to call `WebViewControllerService.fillField()` or, for a
+/// `'file'` field, `FilePickerService.pickCvFile()` +
+/// `WebViewControllerService.triggerFileChooser()` instead, before
+/// firing `FieldConfirmed`/`FieldSkippedNotFound` either way. The FSM
+/// itself doesn't branch on field type; it just carries the information
+/// the caller needs to.
 class ApplicationFlowFsm extends ChangeNotifier {
   // Reassigned on every transition; intentionally not final.
   // ignore: prefer_final_fields
@@ -76,7 +94,7 @@ class ApplicationFlowFsm extends ChangeNotifier {
           _invalidTransition(event, current);
         }
 
-      case ListingConfirmed(:final fieldIds):
+      case ListingConfirmed(:final fieldIds, :final fieldTypes):
         if (current is AwaitingUserActionState) {
           if (fieldIds.isEmpty) {
             // No fields detected on this form — nothing to fill, skip
@@ -86,7 +104,11 @@ class ApplicationFlowFsm extends ChangeNotifier {
             _setState(const FinalReviewState());
           } else {
             _setState(
-              FillingFormState(fieldIds.first, fieldIds.skip(1).toList()),
+              FillingFormState(
+                fieldIds.first,
+                fieldIds.skip(1).toList(),
+                fieldTypes: fieldTypes,
+              ),
             );
           }
         } else {
@@ -96,20 +118,21 @@ class ApplicationFlowFsm extends ChangeNotifier {
       // --- FillingForm per-field confirm loop (milestone05) ---
       case FieldConfirmed(:final fieldId):
         if (current is FillingFormState && current.currentFieldId == fieldId) {
-          if (current.remainingFieldIds.isEmpty) {
-            _setState(const FinalReviewState());
-          } else {
-            _setState(
-              FillingFormState(
-                current.remainingFieldIds.first,
-                current.remainingFieldIds.skip(1).toList(),
-              ),
-            );
-          }
+          _advanceFillingForm(current);
         } else {
           // Guards against confirming a field that isn't the one
           // currently being asked about — the exact failure mode this
           // loop exists to prevent (milestone05).
+          _invalidTransition(event, current);
+        }
+
+      // Zero-candidates case (milestone24) — distinct event from
+      // FieldConfirmed so callers can narrate differently, but the same
+      // advance-the-loop mechanics; never routes through ErrorState.
+      case FieldSkippedNotFound(:final fieldId):
+        if (current is FillingFormState && current.currentFieldId == fieldId) {
+          _advanceFillingForm(current);
+        } else {
           _invalidTransition(event, current);
         }
 
@@ -188,11 +211,40 @@ class ApplicationFlowFsm extends ChangeNotifier {
           _invalidTransition(event, current);
         }
 
-      // --- Not yet implemented at this stage of the build ---
-      // (milestone13/14 — CAPTCHA detection + pause/resume)
+      // --- Checkpoint 3: CAPTCHA pause/resume (milestone13/14) ---
       case CaptchaEncountered():
+        // Allowed from any state, mirroring ErrorOccurred — a CAPTCHA
+        // can appear at any point in the flow (search, fill, review,
+        // submit), not just one specific state.
+        _setState(CaptchaPendingState(interruptedState: current));
+
       case CaptchaResolved():
-        _invalidTransition(event, current);
+        if (current is CaptchaPendingState) {
+          // Returns to the exact interrupted state — this is why
+          // CaptchaPendingState wraps it instead of being a bare flag
+          // (milestone14).
+          _setState(current.interruptedState);
+        } else {
+          _invalidTransition(event, current);
+        }
+    }
+  }
+
+  /// Shared advance-the-per-field-loop mechanics for both
+  /// `FieldConfirmed` (milestone05) and `FieldSkippedNotFound`
+  /// (milestone24) — identical state transition, different triggering
+  /// event so callers can narrate differently.
+  void _advanceFillingForm(FillingFormState current) {
+    if (current.remainingFieldIds.isEmpty) {
+      _setState(const FinalReviewState());
+    } else {
+      _setState(
+        FillingFormState(
+          current.remainingFieldIds.first,
+          current.remainingFieldIds.skip(1).toList(),
+          fieldTypes: current.fieldTypes,
+        ),
+      );
     }
   }
 

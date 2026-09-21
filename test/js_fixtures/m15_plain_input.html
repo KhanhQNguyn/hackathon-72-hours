@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html><body>
+<input id="plain" data-app-node-id="n1" type="text">
+<script src="../../assets/js/form_filler.js"></script>
+<script>
+  var setResult = JSON.parse(window.__formFiller_setValue('n1', 'Nguyễn Văn A'));
+  var actualValue = document.getElementById('plain').value;
+  var pass = setResult.success === true && actualValue === 'Nguyễn Văn A';
+  console.log('M15_PLAIN_RESULT:' + JSON.stringify({ setResult: setResult, actualValue: actualValue }));
+  console.log('M15_PLAIN_PASS:' + pass);
+</script>
+</body></html>
