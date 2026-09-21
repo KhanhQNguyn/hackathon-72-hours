@@ -9,7 +9,7 @@ Read `intent.md` and `spec.md` in full before starting, so stub comments accurat
 ## Prerequisites (assumed already installed on the dev machine)
 
 - Flutter SDK (stable channel)
-- Android SDK + a connected/emulated Android device (min SDK 24+ recommended, since `AccessibilityService` behavior varies less on newer Android)
+- Android SDK + a connected/emulated Android device (min SDK 24+ recommended for a modern WebView/`webview_flutter` implementation)
 - JDK 17
 - Git
 
@@ -18,10 +18,10 @@ If any of these are missing, stop and tell the user rather than trying to instal
 ## Step 1 — Create the Flutter project
 
 ```bash
-flutter create --org com.adchackathon --project-name shopee_voice_assist .
+flutter create --org com.adchackathon --project-name job_access_assist .
 ```
 
-(Team: replace `shopee_voice_assist` and the org string with your actual chosen project/team name once decided — see intent.md's "To fill in" checklist.)
+(Team: replace `job_access_assist` and the org string with your actual chosen project/team name once decided — see intent.md's "To fill in" checklist.)
 
 Set Android as the only target platform for now (per spec.md — Android-only for the working prototype; iOS is not built):
 
@@ -38,9 +38,11 @@ dependencies:
   speech_to_text: ^latest       # STT — wraps Android SpeechRecognizer (spec.md §1)
   flutter_tts: ^latest          # TTS — wraps Android TextToSpeech (spec.md §1)
   http: ^latest                 # OpenAI API calls (spec.md §2)
-  shared_preferences: ^latest   # local state only — language pref, last search (spec.md §8)
-  permission_handler: ^latest   # runtime mic permission + deep-link to Accessibility settings
+  shared_preferences: ^latest   # local state only — language pref, applicant profile, last search (spec.md §8)
+  permission_handler: ^latest   # runtime mic permission
   provider: ^latest             # lightweight state management — FSM exposed via ChangeNotifier
+  webview_flutter: ^latest      # embedded WebView + JS injection/bridge for reading/acting on job portals (spec.md §1, §5)
+  syncfusion_flutter_pdf: ^latest  # PDF text/field extraction for application forms (spec.md §1) — TODO: confirm this is still the team's final pick per spec.md §"To fill in", swap for pdf_text if it isn't
 
 dev_dependencies:
   flutter_test:
@@ -62,23 +64,24 @@ lib/
     constants.dart                   # command phrasing templates, confidence thresholds (spec.md §6.1)
 
   orchestration/
-    order_flow_fsm.dart              # the FSM — states + transitions (spec.md §5 architecture note)
-    order_flow_state.dart            # sealed class / enum of FSM states
-    order_flow_event.dart            # events that trigger transitions
+    application_flow_fsm.dart        # the FSM — states + transitions (spec.md §5 architecture note)
+    application_flow_state.dart      # sealed class / enum of FSM states
+    application_flow_event.dart      # events that trigger transitions
 
   services/
     speech_service.dart              # wraps speech_to_text; n-best hypotheses + confidence (spec.md §6.1)
     tts_service.dart                 # wraps flutter_tts; narration calls
-    openai_service.dart              # intent parsing, node filtering/matching, vision fallback (spec.md §1, §6)
-    accessibility_bridge_service.dart # Dart side of the platform channel to Kotlin (spec.md §5)
+    openai_service.dart              # intent parsing, DOM/PDF content filtering, image-to-text, form-field matching (spec.md §1, §6)
+    webview_controller_service.dart  # Dart side of the WebView + JS-bridge (spec.md §5) — loads target page, runs injected JS, exposes DOM read/fill results
+    pdf_reader_service.dart          # wraps the chosen PDF library; extracts text/field structure from an application-form PDF (spec.md §1, §6)
     preferences_service.dart         # SharedPreferences wrapper (spec.md §8)
-    fuzzy_match_service.dart         # matches STT text against known 2-3 products (spec.md §6.1)
+    fuzzy_match_service.dart         # matches STT text / applicant-profile fields against detected form field labels (spec.md §6.1, §6)
 
   models/
-    product_match.dart               # name, price, rating, seller — read aloud for confirmation
-    order_summary.dart               # item, price, address, total — read aloud before payment handoff
+    job_listing.dart                 # title, company, requirements, how-to-apply — read aloud for user
+    application_summary.dart         # filled-in form field values — read aloud before submit confirmation
     voice_command_result.dart        # transcript, confidence, n-best alternatives
-    node_snapshot.dart                # simplified representation of the AccessibilityService node tree
+    dom_snapshot.dart                 # simplified representation of the WebView page's DOM (images, form fields, text)
 
   ui/
     screens/
@@ -91,24 +94,20 @@ lib/
   utils/
     logger.dart                      # local debug logging only (spec.md §3)
 
+assets/
+  js/
+    dom_reader.js                     # injected script — enumerates images (src/alt), form fields (tag/label), page text (spec.md §5, §6, THE core spike target)
+    form_filler.js                    # injected script — locates a form field and sets its value, dispatches input/change events (spec.md §5, §6)
+
 android/
-  app/src/main/kotlin/com/adchackathon/shopee_voice_assist/
-    MainActivity.kt                          # registers the platform channel
-    accessibility/
-      ShopeeAccessibilityService.kt          # the AccessibilityService itself — THE core spike target
-      NodeTreeSerializer.kt                  # AccessibilityNodeInfo tree → JSON for Dart/OpenAI
-      ActionExecutor.kt                      # performs tap/scroll/text-fill actions
-    channel/
-      AccessibilityChannelHandler.kt         # MethodChannel/EventChannel handlers
+  app/src/main/kotlin/com/adchackathon/<app_package>/
+    MainActivity.kt                          # standard Flutter entrypoint — no custom platform channel needed for WebView access (webview_flutter handles this)
 
-  app/src/main/res/xml/
-    accessibility_service_config.xml          # service capabilities/feedbackType config
-
-  app/src/main/AndroidManifest.xml            # register service, RECORD_AUDIO + INTERNET permissions
+  app/src/main/AndroidManifest.xml            # RECORD_AUDIO + INTERNET permissions
 
 test/
   orchestration/
-    order_flow_fsm_test.dart          # unit tests for state transitions, per spec.md §5 (testable without live device)
+    application_flow_fsm_test.dart    # unit tests for state transitions, per spec.md §5 (testable without live device)
 
 docs/
   intent.md                           # copy in, for reference alongside the code
@@ -140,17 +139,13 @@ class SpeechService {
 
 Apply the same standard (doc comment + TODOs citing spec.md + compiling skeleton) to every file in the tree above.
 
-## Step 5 — Android manifest + accessibility service config
+## Step 5 — Android manifest permissions
 
 In `AndroidManifest.xml`, add:
 - `<uses-permission android:name="android.permission.RECORD_AUDIO" />`
 - `<uses-permission android:name="android.permission.INTERNET" />`
-- Register `ShopeeAccessibilityService` as a `<service>` with `android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"`, pointing to `accessibility_service_config.xml`
 
-In `accessibility_service_config.xml`, stub the config with:
-- `canRetrieveWindowContent="true"` (required to read the node tree)
-- `packageNames` left commented with a note: `<!-- TODO: restrict to com.shopee.vn once confirmed via spike -->`
-- `accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"` as a starting point
+No custom `<service>` registration or accessibility-service config is needed — the WebView is hosted directly by the app via `webview_flutter`, so there's no OS-level accessibility permission to request for reading the target page's content (unlike the old `AccessibilityService` approach). `assets/js/dom_reader.js` and `assets/js/form_filler.js` (Step 3) should be registered in `pubspec.yaml`'s `flutter: assets:` list so they can be loaded and injected via `WebViewController.runJavaScript`/`runJavaScriptReturningResult`.
 
 ## Step 6 — Secrets handling
 
@@ -181,7 +176,7 @@ After scaffolding, confirm:
 ## What NOT to do in this pass
 
 - Do not implement the FSM's actual transition logic
-- Do not implement the real `AccessibilityService` reading/matching logic — that's the spike, done as its own focused session, not folded into scaffolding
+- Do not implement the real WebView/JS-bridge DOM-reading or form-filling logic, or the real PDF-parsing logic — that's the spike (plan.md Workstream A1), done as its own focused session, not folded into scaffolding
 - Do not write real OpenAI prompt content yet — stub the method signature only
 - Do not add UI polish/styling beyond what's needed to confirm the app compiles and is navigable
 

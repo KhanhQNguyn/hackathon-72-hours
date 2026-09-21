@@ -6,34 +6,35 @@
 
 | Layer | Choice | Reason |
 |---|---|---|
-| App shell (UI) | **Flutter (Dart)** | Already decided in intent.md. Note: the app's *own* visible UI surface is intentionally small — a voice-trigger button, a live status/transcript readout, a language toggle (EN/VI). Most of the "product" happens inside Shopee's UI, not ours. |
-| Automation/orchestration layer | **Kotlin `AccessibilityService`** (native Android), bridged to Flutter via a **Platform Channel** (`MethodChannel` + `EventChannel`) | This is the part that reads Shopee's screen and acts on it. Flutter has no wrapper for `AccessibilityService` — it must be written natively and exposed to the Dart side as a channel. This is the highest-risk, highest-value component; build/test it first. |
-| AI / NLU + vision | **OpenAI API** — `gpt-4o-mini` for intent parsing (voice command → structured search query) and node-tree filtering/matching (noise/ad suppression, "find the right element"); `gpt-4o` (vision) as a **fallback** when an accessibility node is unlabeled/mislabeled — send a cropped screenshot of the ambiguous region, ask it to identify the real content. | Team's choice. `gpt-4o-mini` keeps per-call cost/latency low for the frequent filtering/matching calls; vision is only invoked on the fallback path, not every step, to control cost and latency. Matching/filtering prompts should take the target app's package name and node tree as generic parameters rather than hardcoding Shopee-specific field names, so the same logic could point at a different app (e.g. Grab, Be, XanhSM) later without a prompt rewrite — only Shopee is built/tested now, but the interface is written generically from the start. |
-| Voice I/O | **`speech_to_text`** + **`flutter_tts`** (Flutter plugins wrapping Android `SpeechRecognizer`/`TextToSpeech`) — on-device | Same underlying on-device engines as originally decided, free, no network dependency. Using the existing Flutter plugins instead of hand-writing a custom platform channel for STT/TTS saves real build time — custom native channel work is reserved for the `AccessibilityService`, which has no existing plugin. |
-| Local storage | **`SharedPreferences`** (simple key-value: language setting, last search) — no real database | No user accounts, no server-side state, no multi-device sync needed for an MVP. A full DB would be solving a problem this project doesn't have. |
-| Deployment | **Debug/release APK, sideloaded** | No Play Store (review timelines don't fit 72h — see intent.md Constraints). No hosting/infra needed since there's no backend. |
-| Supporting tools | AI coding assistant (Claude Code) for implementation velocity on the Kotlin service + Flutter channel + prompt engineering; Git for version control, following the team's own intent → spec → schema/endpoints → code flow | Per intent.md's engineering-approach note: coding speed buys robustness on the narrow scope, not broader scope. |
+| App shell (UI) | **Flutter (Dart)** | Already decided in intent.md. The app's *own* visible UI surface is intentionally small — a voice-trigger button, a live status/transcript readout, a language toggle (EN/VI). Most of the "product" happens inside the embedded WebView/PDF view, not our own screens. |
+| Web content perception/action | **`webview_flutter`** (embedded in-app WebView) + **injected JavaScript** (`runJavaScriptReturningResult` / `addJavaScriptChannel`) for direct DOM access | **Architecture change from the original plan.** The original design used a native Kotlin `AccessibilityService` to read a third-party native app's UI tree. That approach has a known blind spot: content rendered inside a `WebView` doesn't reliably expose through Android's accessibility tree (confirmed via the team's own earlier real-device testing on a different app, where WebView-rendered content reported as outside the app's normal accessibility scope). Since Stage 2's targets — job portals, careers pages, web-based application forms — **are** web content, reading them via `AccessibilityService` would hit exactly this blind spot. Hosting the target page in the app's **own** embedded WebView and reading/acting on it via injected JS gives direct, first-party DOM access (`document.querySelectorAll`, `img.alt`, `getBoundingClientRect`, form field detection), sidestepping the blind spot entirely. This is the highest-risk, highest-value component; build/test it first, same as the old `AccessibilityService` was. |
+| PDF perception | **Flutter PDF-parsing library** — team to confirm final choice during build (candidates: `syncfusion_flutter_pdf` for richer text/field extraction, or `pdf_text` for a lighter pure-text extraction); note in this file which one was actually picked and why, once decided | PDF application forms are not reliably readable via the WebView/DOM approach (a PDF isn't DOM content) and need their own extraction path. Whichever library is chosen, prefer one that can distinguish form fields from body text, not just dump raw text. |
+| AI / NLU + vision | **OpenAI API** — `gpt-4o-mini` for intent parsing (voice command → structured request) and DOM/PDF-content filtering, summarization, and form-field matching; `gpt-4o` (vision) for **image-to-text** when a job description is posted as an image with no usable alt text (the core Stage 2 barrier) — send the extracted image, ask it to transcribe/describe the actual job-description content. | Team's choice, unchanged reasoning from before: `gpt-4o-mini` keeps per-call cost/latency low for frequent filtering/matching calls; vision is only invoked when an image lacks meaningful alt text, not on every step, to control cost and latency. Filtering/matching prompts should take the target page's DOM snapshot or PDF text as generic parameters rather than hardcoding one portal's field names, so the same logic generalizes to a second portal later without a prompt rewrite — only 1–2 real platforms are built/tested now, but the interface is written generically from the start. |
+| Voice I/O | **`speech_to_text`** + **`flutter_tts`** (Flutter plugins wrapping Android `SpeechRecognizer`/`TextToSpeech`) — on-device | Unchanged from before: same underlying on-device engines, free, no network dependency. |
+| Local storage | **`SharedPreferences`** (simple key-value: language setting, saved profile fields for form-fill, last search) — no real database | No user accounts, no server-side state, no multi-device sync needed for an MVP. |
+| Deployment | **Debug/release APK, sideloaded** | No Play Store (review timelines don't fit 72h). No hosting/infra needed since there's no backend. |
+| Supporting tools | AI coding assistant (Claude Code) for implementation velocity on the WebView/JS-bridge integration, PDF parsing, and prompt engineering; Git for version control, following the team's intent → spec → scaffolder → plan flow | Per intent.md's engineering-approach note: coding speed buys reliability on the 1–2 supported real targets, not broader scope. |
 
-**No custom backend for the MVP.** The Flutter app calls the OpenAI API directly over HTTPS from the device. This is a deliberate scope cut, not an oversight — see the Security note in Section 3 for the trade-off this creates and how to phrase it safely in the deck.
+**No custom backend for the MVP.** The Flutter app calls the OpenAI API directly over HTTPS from the device. This is a deliberate scope cut, not an oversight — see the Security note in Section 3 for the trade-off this creates and how to phrase it safely in the deck. Unchanged reasoning from the original plan.
 
 ## 2. API
 
 - **This project has no API it hosts** — there's no server, so no REST/GraphQL surface to design or version. "API" here means **how the app calls out** to OpenAI's REST API (`chat/completions`, both text and vision-capable calls).
-- **Call pattern:** synchronous request/response per step (e.g., one call to parse the voice command into a search intent; one call per screen to filter/match the accessibility tree; occasional vision calls only on the fallback path). Each call should carry minimal context (the relevant subtree/screenshot, not the whole app state) to control latency and token cost.
+- **Call pattern:** synchronous request/response per step (e.g., one call to parse the voice command into a request intent; one call per page/PDF to filter/summarize content or match form fields; occasional vision calls only when an image lacks usable alt text). Each call should carry minimal context (the relevant DOM subset/PDF text/image, not the whole page or file) to control latency and token cost.
 - **Roadmap (not built now):** if this became a real product, a thin backend would proxy these calls so the API key isn't shipped in the client — see Section 3.
 
 ## 3. Middleware
 
 - No server middleware exists (no server). The on-device equivalents:
-  - **Error/timeout handling around every `AccessibilityService` action** — if a tap/scroll doesn't produce the expected screen change within a timeout, treat it as a recoverable failure: narrate ("that didn't load as expected, retrying...") and retry once or twice before giving up and asking the user for guidance. This is the "built-in robustness" principle from intent.md's Success Criteria, implemented concretely here.
+  - **Error/timeout handling around every WebView/JS action and PDF parse** — if an injected script doesn't return the expected result, a page doesn't finish loading, or PDF parsing throws, treat it as a recoverable failure: narrate ("that didn't load as expected, retrying...") and retry once or twice before giving up and asking the user for guidance. Same "built-in robustness" principle from intent.md's Success Criteria, retargeted to the new failure modes (page-load failure, unexpected DOM structure, PDF parse failure, form field not found) instead of the old ad-popup/action-timeout modes.
   - **Local logging** (Logcat + a lightweight in-app event log) for debugging during the build, not a production observability stack.
-  - **OpenAI rate limits:** be aware of per-minute request/token limits on whichever tier the team is on; the filtering/matching call happens frequently (every screen), so a burst of retries during error recovery could hit limits — worth a simple backoff, not a queueing system.
-- **⚠️ Security note, flag this to the team explicitly:** shipping the OpenAI API key inside the client APK is insecure (anyone who decompiles the APK can extract it and rack up charges on your account). This is a known, deliberate shortcut for a 72-hour hackathon prototype — not something to ship as a real product. Mitigate minimally: keep the key out of the Git repo (use a local `local.properties`/`.env` excluded via `.gitignore`, injected at build time), and mention "backend key-proxy" as roadmap/future-work in the deck rather than pretending this is production-secure.
+  - **OpenAI rate limits:** be aware of per-minute request/token limits on whichever tier the team is on; the filtering/matching call happens frequently (every page/PDF), so a burst of retries during error recovery could hit limits — worth a simple backoff, not a queueing system.
+- **⚠️ Security note, flag this to the team explicitly:** shipping the OpenAI API key inside the client APK is insecure (anyone who decompiles the APK can extract it and rack up charges on your account). This is a known, deliberate shortcut for a 72-hour hackathon prototype — not something to ship as a real product. Mitigate minimally: keep the key out of the Git repo (use a local `local.properties`/`.env` excluded via `.gitignore`, injected at build time), and mention "backend key-proxy" as roadmap/future-work in the deck rather than pretending this is production-secure. Unchanged from the original plan.
 
 ## 4. Authentication
 
-- **This app has no authentication of its own.** There are no user accounts, no login screen, nothing to sign into — the app relies on the user already being signed into **Shopee** via their own existing Shopee app/session on the device. Our app never touches Shopee credentials; it only reads/acts on whatever screen Shopee is already showing.
-- WCAG 2.2 SC 3.3.8 (Accessible Authentication) therefore doesn't directly apply to this MVP, since we implement no auth flow ourselves. **If the roadmap ever adds accounts** (e.g., to save preferred addresses, order history, or custom voice shortcuts), that future auth flow must avoid CAPTCHA-only or memory/puzzle-based verification, per SC 3.3.8 — worth a one-line roadmap note in the deck, not something to build now.
+- **This app has no authentication of its own.** There are no user accounts, no login screen. If the target job portal requires the user to be signed in (e.g. to view or submit an application), the user signs into that site themselves inside the app's embedded WebView, the same way they would in any browser — our app never touches those credentials directly; it only reads/acts on whatever page is already loaded in the WebView it hosts.
+- WCAG 2.2 SC 3.3.8 (Accessible Authentication) therefore doesn't directly apply to this MVP's own flow, since we implement no auth flow ourselves. **If the roadmap ever adds accounts** (e.g., to save a reusable application profile across multiple job applications), that future auth flow must avoid CAPTCHA-only or memory/puzzle-based verification, per SC 3.3.8 — worth a one-line roadmap note in the deck, not something to build now.
 
 ## 5. Architecture
 
@@ -54,97 +55,94 @@
                 │ Platform Channel           │ HTTPS
                 ▼                            ▼
 ┌───────────────────────────────┐  ┌──────────────────────────┐
-│ Kotlin AccessibilityService    │  │ OpenAI API                │
-│ (native Android)               │  │ - gpt-4o-mini: intent      │
-│ - reads Shopee's node tree     │  │   parsing, node filtering/ │
-│ - taps/scrolls/fills on Shopee │◄─┤   matching                 │
-│ - reports node tree/screenshots│  │ - gpt-4o (vision):         │
-│   up to the AI layer for       │  │   fallback for mislabeled  │
-│   filtering/matching decisions │  │   elements                 │
-└───────────────┬─────────────────┘  └──────────────────────────┘
-                │ reads/acts on screen (same access level as TalkBack)
-                ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Shopee app (real, unmodified, third-party)                   │
-└─────────────────────────────────────────────────────────────┘
+│ Embedded WebView               │  │ OpenAI API                │
+│ (webview_flutter, hosts the    │  │ - gpt-4o-mini: intent      │
+│ real job portal/careers page)  │  │   parsing, DOM/PDF-content │
+│ - injected JS reads the DOM    │◄─┤   filtering, form-field    │
+│   (images, form fields, text)  │  │   matching                 │
+│ - injected JS fills form fields│  │ - gpt-4o (vision):         │
+│   + dispatches input events    │  │   image-to-text for job    │
+└───────────────┬─────────────────┘  │   descriptions posted as  │
+                │                     │   images with no alt text │
+                │                     └──────────────┬────────────┘
+                │                                    │
+┌───────────────▼─────────────────┐                  │
+│ PDF-parsing service (Dart)       │──────────────────┘
+│ (extracts text/fields from a     │
+│ downloaded application-form PDF) │
+└───────────────────────────────────┘
 ```
 
-- **Why this architecture fits a 3-day build:** it's client-only — no server to stand up, deploy, or keep alive during the demo/evaluation window (one less thing to break). The two genuinely hard components (the `AccessibilityService` and the AI filtering/matching logic) are isolated behind a single platform-channel boundary, so they can be built and tested somewhat independently by different team members in parallel.
-- **Single points of failure to test early:** the platform channel itself (Flutter↔Kotlin communication) and the `AccessibilityService`'s ability to read real Shopee — both are exactly what the spike (still pending) needs to validate before the rest of the build depends on them.
+- **Why this architecture fits a 3-day build:** still client-only — no server to stand up, deploy, or keep alive during the demo/evaluation window. The two genuinely hard components (the WebView/JS-bridge DOM reader and the AI filtering/matching/vision layer) are isolated behind clear boundaries, so they can be built and tested somewhat independently by different team members in parallel — same parallelization benefit as the original architecture.
+- **Single points of failure to test early:** the WebView + JS-bridge round trip itself (can injected JS reliably read and act on a real page's DOM) and the PDF-parsing library's ability to extract structure from a real application form — both are exactly what the spike (still pending, see plan.md) needs to validate before the rest of the build depends on them.
 
 ### Software architecture pattern: layered + Finite State Machine (FSM)
 
-Classic web patterns (N-Tier, modular monolith) describe how a *server* is organized — this project has no server, so they don't map directly. What's used instead:
+Classic web patterns (N-Tier, modular monolith) describe how a *server* is organized — this project has no server, so they don't map directly. What's used instead, unchanged from the original plan:
 
-- **Orchestration core = a Finite State Machine**, not a loose collection of feature code. The Domain section below is already a strict sequential pipeline with defined pause/retry points (`Idle → Listening → ParsingIntent → Matching → AwaitingProductConfirmation → Executing → AwaitingPaymentHandoff → Done`, with `Error/Retrying` transitions back to prior states). Modeling it explicitly as an FSM gives a single source of truth for "where the flow is," makes retry logic (Success Criteria's "built-in robustness") a normal state transition rather than special-cased code, and makes the flow unit-testable without a live phone/mic/Shopee.
-- **Layers around the FSM** (mirrors the 8 bounded contexts in Section 6, not a generic web split):
+- **Orchestration core = a Finite State Machine**, not a loose collection of feature code: `Idle → Listening → ParsingIntent → LoadingTarget → ReadingContent → AwaitingUserAction → FillingForm → AwaitingSubmitConfirmation → Done`, with `Error/Retrying` transitions back to the state that failed. Modeling it explicitly as an FSM gives a single source of truth for "where the flow is," makes retry logic a normal state transition rather than special-cased code, and makes the flow unit-testable without a live phone/mic/network.
+- **Layers around the FSM** (mirrors the bounded contexts in Section 6):
   1. **UI** — Flutter widgets, purely presentational, driven by current FSM state (effectively MVVM, with the FSM as the "ViewModel")
   2. **Orchestration** — the FSM itself, pure Dart, no platform/network code inside it
-  3. **Services** — thin, swappable wrapper classes per external dependency (`SpeechService`, `OpenAIService`, `AccessibilityBridge`) — mockable, so UI work can proceed in parallel with the native service still being built
-  4. **Native** — the Kotlin `AccessibilityService`, exposed only via the platform channel, no business logic inside it
-- **Deliberately not using:** full Clean Architecture (entities/use-cases/repositories/DI ceremony). It's the right call for long-lived production software, but the setup cost isn't worth it for 3 people/72 hours — the layered+FSM approach gets most of the readability/parallel-build benefit for a fraction of the cost.
+  3. **Services** — thin, swappable wrapper classes per external dependency (`SpeechService`, `OpenAIService`, `WebViewControllerService`, `PdfReaderService`) — mockable, so UI work can proceed in parallel with the real WebView/PDF integration still being built
+  4. **Web content** — the embedded WebView, driven only via the JS-bridge service, no business logic inside the injected script beyond DOM extraction/manipulation itself
+- **Deliberately not using:** full Clean Architecture (entities/use-cases/repositories/DI ceremony). Right call for production, not worth the setup cost for 3 people/72 hours — unchanged reasoning from before.
 
 ## 6. Domain
 
 Bounded contexts / responsibilities, mapped to Core Features in intent.md:
 
-1. **Voice Command Intake** — on-device `SpeechRecognizer` (STT), silence/end-of-speech detection, handoff of transcript to the NLU call. **Distortion mitigation, decided:**
-   - Set STT locale explicitly per session (`vi-VN` or `en-US`, via the existing language toggle) rather than auto-detecting mixed-language speech.
-   - Use a constrained command phrasing ("Order [item] on Shopee") — shorter, more predictable utterances transcribe more reliably than open-ended speech.
-   - Check the STT **confidence score**; below a threshold, don't forward to the LLM — narrate a re-ask ("didn't catch that, could you repeat the item?") instead of processing garbage input.
-   - Pass the STT **n-best hypothesis list** (not just the top guess) to the LLM/matcher, and fuzzy-match against the known 2–3 supported products (per intent.md scope) rather than trusting exact transcribed spelling — "Phở Bò"/"Fuh Bo"/"Pho Bow" should all resolve to the same item.
-   - **The existing product-match confirmation checkpoint (see #5 below) is the final safety net** — even a mis-transcription that slips past the above gets caught when the user hears "I found X, confirm?" and says no. Worth stating explicitly in the deck as a designed-in error-correction loop, not an incidental nicety.
-2. **Intent Parsing** — OpenAI (`gpt-4o-mini`, text-only — audio is transcribed on-device first, not sent to the API directly; see rationale above) call that turns the transcript into a structured search intent (product name, any constraints mentioned). *(Feature 1)*
-3. **Screen Perception** — `AccessibilityService` captures the current Shopee node tree; on ambiguity, captures a screenshot crop for the vision fallback. *(Feature 2, Problem pain point #3)*
-4. **AI Filtering & Matching** — suppresses ad/promo/irrelevant nodes, matches the parsed intent against real product nodes, produces the "best match" for confirmation readback. *(Feature 2)*
-5. **Confirmation Manager** — the two hard-stop checkpoints (product match, pre-payment) — pauses the flow, narrates the decision point, waits for explicit user input before continuing. *(Feature 2 & 4, the notification-vs-confirmation distinction)*
-6. **Action Orchestrator** — drives the actual taps/scrolls/text-fill on Shopee once confirmed; narrates every step in between (not just at checkpoints). *(Feature 3)*
-7. **Error Recovery** — timeout/retry/narrate-and-recover wrapper around the Orchestrator, handling popup ads and unexpected screen states. *(Problem pain point #2, Success Criteria's "built-in robustness" principle)*
-8. **Payment Handoff** — detects arrival at the payment/OTP screen and deliberately stops, reading the full order summary aloud. *(Feature 4)*
+1. **Voice Command Intake** — on-device `SpeechRecognizer` (STT), silence/end-of-speech detection, handoff of transcript to the NLU call. Same distortion-mitigation chain as the original plan: pin STT locale explicitly per session (`vi-VN`/`en-US`), use constrained command phrasing, check confidence score before forwarding to the LLM, pass the n-best hypothesis list downstream.
+2. **Intent Parsing** — OpenAI (`gpt-4o-mini`, text-only) call that turns the transcript into a structured request (e.g. "read this job listing," "fill and submit this application"). *(supports all 4 Features)*
+3. **Web Content Perception** *(was "Screen Perception")* — injected JS reads the currently-loaded WebView page's DOM: detects images (and whether they carry meaningful `alt` text), detects form fields (`<input>`/`<select>`/`<textarea>` plus associated labels), and extracts visible text content. *(Feature 2, barrier #1)*
+4. **PDF Perception** *(new)* — the PDF-parsing service extracts text and, where possible, distinguishes form-field structure from body text out of a downloaded application-form PDF. *(Feature 3, barrier #2)*
+5. **AI Filtering & Matching** — suppresses navigation/ad/irrelevant DOM content, summarizes/narrates the actual job-listing content, runs the vision fallback on images lacking alt text, and matches parsed user-provided information (name, phone, etc.) to detected form fields. *(Features 1 & 2, barriers #1, #3, #4)*
+6. **Confirmation Manager** — the hard-stop checkpoint before final submission: pauses the flow, reads the fully-filled-in application form back in full, and waits for explicit user confirmation before continuing. *(Feature 4, retargeted from the old "before payment" checkpoint to "before submit")*
+7. **Form-Fill Orchestrator** *(was "Action Orchestrator")* — drives the actual form-field-filling (`element.value = ...` + dispatching an `input` event) via the JS bridge once confirmed information is available; narrates every step in between (not just at the checkpoint). *(Feature 4)*
+8. **Error Recovery** — timeout/retry/narrate-and-recover wrapper around web/PDF actions, handling the new failure modes: page fails to load in the WebView, PDF fails to parse, or an expected form field isn't found. *(Success Criteria's "built-in robustness" principle, same idea as before, new failure modes)*
 
 ## 7. Design Requirements — WCAG 2.2 AA, mapped to Android/Flutter
 
-WCAG 2.2 is technically a *web content* standard, so it doesn't apply verbatim to a native Android app — but its principles map cleanly, and this table exists so the team can honestly say in the deck "we designed against WCAG 2.2 AA from the architecture up," backed by a real mapping rather than a claim.
-
-**Important meta-point:** the *automation target* is Shopee (a third-party app we don't control the accessibility of — we can only read/compensate for it). But **our own app's UI** (the small Flutter shell — trigger button, status screen, language toggle) is fully ours to build right, and it must itself be usable by a blind user via TalkBack, or the whole product is self-defeating. The table below applies to *our own UI*, not to Shopee's (which we can't change).
+WCAG 2.2 is technically a *web content* standard, so it doesn't apply verbatim to a native Android app — but its principles map cleanly, and this table exists so the team can honestly say in the deck "we designed against WCAG 2.2 AA from the architecture up," backed by a real mapping rather than a claim. Unchanged from the original plan — this table applies to **our own app's UI**, not to the third-party portals/PDFs we read (which we can only perceive/compensate for, not redesign).
 
 | WCAG 2.2 AA criterion | Android/Flutter equivalent | How this project implements it |
 |---|---|---|
-| **1.4.3 Contrast (Minimum)** — 4.5:1 text, 3:1 large text | Flutter theme color tokens checked against contrast ratio | Define the app's color palette with contrast-checked pairs from the start (use a contrast checker during design, not after); since blind users are the primary audience, this mainly matters for low-vision users and sighted teammates testing the app |
+| **1.4.3 Contrast (Minimum)** — 4.5:1 text, 3:1 large text | Flutter theme color tokens checked against contrast ratio | Define the app's color palette with contrast-checked pairs from the start; matters mainly for low-vision users and sighted teammates testing the app |
 | **1.4.11 Non-text Contrast** — 3:1 for UI components/icons | Same, applied to buttons/icons/focus indicators | Trigger button and status icons meet 3:1 against background |
 | **1.4.4 Resize Text** — up to 200% without loss of function | Flutter's `MediaQuery.textScaleFactor` / respecting system font size | Use scalable text units, not fixed pixel sizes that break layout when the OS font-size setting is increased |
 | **1.4.1 Use of Color** — don't convey info by color alone | N/A mostly (voice-first UI) | Status conveyed via narration (TTS) + text label, never color alone, for the rare visual state (e.g. a colored status dot) |
-| **2.5.8 Target Size (Minimum)** — 24×24 CSS px minimum | Android Material Design guideline is 48dp minimum, which already exceeds the WCAG floor | Use standard Material button sizing (48dp+) for the trigger button and any tappable elements — trivially satisfied by not overriding Flutter/Material defaults |
+| **2.5.8 Target Size (Minimum)** — 24×24 CSS px minimum | Android Material Design guideline is 48dp minimum, which already exceeds the WCAG floor | Use standard Material button sizing (48dp+) for the trigger button and any tappable elements |
 | **2.4.7 Focus Visible / 2.4.11 Focus Not Obscured** | TalkBack's focus highlight, driven by proper widget semantics | Ensure every interactive Flutter widget has a `Semantics` label and is reachable in a logical TalkBack traversal order — test with TalkBack on, not just by looking at the screen |
-| **2.1.1 Keyboard (all functionality without a mouse)** | Android equivalent: full functionality operable via TalkBack gestures / external switch access, not dependent on precise touch/drag | Since the whole point of the app is voice-first operation, this is largely satisfied by design — but verify the minimal touch UI (trigger button) is also fully operable via TalkBack swipe-navigation, not just direct tap |
-| **3.3.2 Labels or Instructions** | `Semantics(label: ...)` on every interactive widget | Trigger button, language toggle, and any settings must have clear, descriptive accessibility labels — not just visual text (icons need labels too) |
-| **3.3.1 Error Identification** | TTS narration of errors, not silent failure or visual-only error text | When the Action Orchestrator hits a recoverable error (Section 3), the error is **spoken**, not just logged or shown as text the user can't see |
-| **4.1.2 Name, Role, Value** | Correct Flutter `Semantics`/widget types (use real `Button`, not a styled `GestureDetector` with no semantic role) | Avoid "div-soup" equivalent in Flutter — don't build custom-painted widgets with no semantic role when a standard accessible widget exists |
-| **3.3.8 Accessible Authentication** | N/A for MVP (no auth flow — see Section 4) | Documented as roadmap-only consideration if accounts are ever added |
+| **2.1.1 Keyboard (all functionality without a mouse)** | Android equivalent: full functionality operable via TalkBack gestures / external switch access | Since the whole point of the app is voice-first operation, largely satisfied by design — verify the minimal touch UI (trigger button) is also fully operable via TalkBack swipe-navigation |
+| **3.3.2 Labels or Instructions** | `Semantics(label: ...)` on every interactive widget | Trigger button, language toggle, and any settings must have clear, descriptive accessibility labels |
+| **3.3.1 Error Identification** | TTS narration of errors, not silent failure or visual-only error text | When Error Recovery hits a recoverable error (Section 3), the error is **spoken**, not just logged or shown as text the user can't see |
+| **4.1.2 Name, Role, Value** | Correct Flutter `Semantics`/widget types | Avoid "div-soup" equivalent in Flutter — don't build custom-painted widgets with no semantic role when a standard accessible widget exists |
+| **3.3.8 Accessible Authentication** | N/A for MVP (no auth flow of our own — see Section 4) | Documented as roadmap-only consideration if a saved-profile/account feature is ever added |
 
-**Testing method, not just design:** before the demo recording, run the app's own UI with **TalkBack enabled** and confirm it's fully navigable — this is the cheapest, highest-credibility accessibility validation step available, and it directly demonstrates "we practice what we preach" to judges.
+**Testing method, not just design:** before the demo recording, run the app's own UI with **TalkBack enabled** and confirm it's fully navigable — cheapest, highest-credibility accessibility validation step available, and directly demonstrates "we practice what we preach" to judges.
 
 ### Items from accessibility-wcag.md not yet covered above, closed here
 
-`accessibility-wcag.md` is written generically for web apps; cross-checking its checklist against this project surfaced a few items the table above didn't yet address:
+Unchanged from the original plan — these cross-checks still apply as-is:
 
 | Checklist item (as written, web-oriented) | Android/Flutter equivalent | Where it's implemented |
 |---|---|---|
-| `<html lang="...">` declared | Flutter `MaterialApp(locale: ...)` set from the language preference, not left to device default | `preferences_service.dart` drives this — same source of truth as the STT/TTS locale (spec.md §6.1), so language stays consistent everywhere |
-| Images have meaningful alt text; decorative images get `alt=""` | `Semantics(label: ...)` for meaningful icons; `ExcludeSemantics` or `Semantics(label: '')` for purely decorative ones | App's icon set is minimal (trigger button, status icon) — audit each one explicitly rather than assuming Flutter's defaults are already correct |
-| Error messages announced to screen readers (`aria-live`/`aria-describedby`) | `Semantics(liveRegion: true)` on the status/narration text widget | **Important addition:** `status_narration_view.dart` (scaffolder.md) should be a live region — if TTS narration fails or is muted, TalkBack still announces status text changes automatically. This makes the "narrate every step" requirement (intent.md Core Feature 3) redundant-safe, not dependent on TTS alone. |
+| `<html lang="...">` declared | Flutter `MaterialApp(locale: ...)` set from the language preference, not left to device default | `preferences_service.dart` drives this — same source of truth as the STT/TTS locale (spec.md §6.1) |
+| Images have meaningful alt text; decorative images get `alt=""` | `Semantics(label: ...)` for meaningful icons in **our own** UI; `ExcludeSemantics` or `Semantics(label: '')` for purely decorative ones | Audit the app's own minimal icon set explicitly. (Note: images **inside the target job portal/PDF** without alt text are handled by Feature 1's vision fallback, a functional feature, not a WCAG-compliance checklist item for our own UI.) |
+| Error messages announced to screen readers (`aria-live`/`aria-describedby`) | `Semantics(liveRegion: true)` on the status/narration text widget | `status_narration_view.dart` (scaffolder.md) should be a live region — if TTS narration fails or is muted, TalkBack still announces status text changes automatically |
 | Drag-and-drop needs a click/tap alternative | N/A | No drag interactions exist anywhere in this app's own UI |
-| Automated accessibility scan tool (axe/Lighthouse are web-only) | **Android equivalent: Google's Accessibility Scanner app**, run against the built APK | Add to Workstream B6 (plan.md) as a supplement to manual TalkBack testing — catches basic issues faster, same "~30-40% coverage, doesn't replace manual testing" caveat applies |
-| Video/audio has captions or a transcript | Applies to the **submission video itself**, not just the app | Add burned-in or SRT captions to the demo video (plan.md Workstream C6) — for an accessibility-competition submission, an uncaptioned demo video undercuts the pitch; this is a credibility point worth the small extra effort |
+| Automated accessibility scan tool (axe/Lighthouse are web-only) | **Android equivalent: Google's Accessibility Scanner app**, run against the built APK | Supplement to manual TalkBack testing — same "~30-40% coverage, doesn't replace manual testing" caveat applies |
+| Video/audio has captions or a transcript | Applies to the **submission video itself** | Add burned-in or SRT captions to the demo video |
 
 ## 8. Local State (schema.md skipped — see decision below)
 
-No `schema.md`/`models.md` file — there's no database, so there are no models/relationships to document. The template itself recommends skipping this when the system is small and simple; this project qualifies (zero models). The only persisted state, documented here instead of in a separate file:
+No `schema.md`/`models.md` file — there's no database, so there are no models/relationships to document. This project qualifies (zero models). The only persisted state, documented here instead of in a separate file:
 
 | Key | Type | Notes |
 |---|---|---|
 | `language_pref` | string (`en` \| `vi`) | Drives STT locale + TTS voice + UI text |
-| `last_search_query` | string, optional | Convenience only — not required for MVP functionality |
+| `applicant_profile` | map, optional | Reusable form-fill fields (name, phone, email, etc.) the user provides once and confirms before each submission — convenience only, not required for MVP functionality |
+| `last_search_query` | string, optional | Convenience only |
 
 Stored via Flutter `SharedPreferences`. No user accounts, no server-side persistence, nothing else to model.
 
@@ -152,8 +150,9 @@ Stored via Flutter `SharedPreferences`. No user accounts, no server-side persist
 
 ## ⚠️ To fill in as the build progresses
 
-- [x] endpoints.md — **not needed**, confirmed. No backend, so no hosted routes to document. The project's one outbound API call (to OpenAI) is documented in Section 2 above, since it's a call this app *makes*, not an endpoint it *serves*.
-- [ ] Confirm OpenAI API tier/rate limits and whether the hackathon provides any API credits (worth checking with organisers/mentors on Day 1 — some hackathons sponsor AI API credits)
-- [ ] Run the `AccessibilityService` + real Shopee spike (still pending, highest-risk unknown — see intent.md)
-- [x] schema.md/endpoints.md — **not needed**, confirmed. No backend, no database; the one bit of local state is documented in Section 8 above instead.
+- [x] endpoints.md — **not needed**, confirmed. No backend, so no hosted routes to document. The project's one outbound API call (to OpenAI) is documented in Section 2 above.
+- [ ] Confirm OpenAI API tier/rate limits and whether the hackathon provides any API credits
+- [ ] Run the WebView + JS-bridge spike against a real job portal/careers page (still pending, highest-risk unknown — see intent.md, plan.md)
+- [ ] Pick and confirm the PDF-parsing library (`syncfusion_flutter_pdf` vs. `pdf_text` vs. other) once tested against a real application-form PDF; update Section 1's table with the final choice and why
+- [x] schema.md/endpoints.md — **not needed**, confirmed. No backend, no database.
 - [ ] TalkBack pass on the app's own UI before final demo recording
