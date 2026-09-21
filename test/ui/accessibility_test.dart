@@ -35,7 +35,6 @@ Widget _wrap(Widget screen, {String language = 'en'}) {
           webView: h.web,
           pdfReader: FakePdfReaderService(),
           profileService: MemoryProfileService(),
-          filePicker: StubFilePicker(),
         ),
       ),
     ],

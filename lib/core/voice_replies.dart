@@ -36,6 +36,15 @@ bool isAffirmative(String reply) {
   return _words(reply).any(_affirmative.contains);
 }
 
+/// True for "retry" / "thử lại" — the voice retry after an error.
+bool isRetry(String reply) {
+  final text = reply.toLowerCase();
+  return text.contains('retry') ||
+      text.contains('try again') ||
+      text.contains('thử lại') ||
+      text.contains('thu lai');
+}
+
 /// True for "continue" / "tiếp tục" — the resume command after a CAPTCHA
 /// hand-off (01-intent.md §4).
 bool isContinue(String reply) {

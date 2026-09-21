@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:http/http.dart' as http;
 
 import '../core/app_config.dart';
@@ -13,7 +15,6 @@ import '../models/element_match_result.dart';
 import '../models/openai_results.dart';
 import '../models/pdf_form_field.dart';
 import '../services/applicant_profile_service.dart';
-import '../services/file_picker_service.dart';
 import '../services/fuzzy_match_service.dart';
 import '../services/openai_service.dart';
 import '../services/page_load_exception.dart';
@@ -30,6 +31,18 @@ import 'submit_hook.dart';
 import 'voice_command_gate.dart';
 
 enum _Outcome { confirmed, skipped, aborted }
+
+/// A failure whose message is already written for the user, in their
+/// language. The FSM stores `toString()` in `ErrorState.message`, which is
+/// then spoken — so it must never be a raw exception string.
+class FlowFailure implements Exception {
+  final String message;
+
+  const FlowFailure(this.message);
+
+  @override
+  String toString() => message;
+}
 
 /// An image downloaded for the vision call.
 class FetchedImage {
@@ -66,6 +79,35 @@ Future<FetchedImage?> defaultImageFetcher(String url) async {
   }
 }
 
+/// Waits for the system file chooser to come and go: the app pauses when
+/// it opens and resumes when it closes. If the chooser never takes the
+/// screen (no pause within 5 s) it returns rather than waiting for a
+/// resume that will not come. Needs a device to exercise.
+Future<void> defaultAwaitFileChooser() async {
+  final done = Completer<void>();
+  var sawPause = false;
+  final listener = AppLifecycleListener(
+    onInactive: () => sawPause = true,
+    onPause: () => sawPause = true,
+    onResume: () {
+      if (sawPause && !done.isCompleted) done.complete();
+    },
+  );
+  final noChooser = Timer(const Duration(seconds: 5), () {
+    if (!sawPause && !done.isCompleted) done.complete();
+  });
+  final giveUp = Timer(const Duration(minutes: 3), () {
+    if (!done.isCompleted) done.complete();
+  });
+  try {
+    await done.future;
+  } finally {
+    listener.dispose();
+    noChooser.cancel();
+    giveUp.cancel();
+  }
+}
+
 /// Drives one complete run of the flow — the "orchestrating caller" the
 /// FSM's own comments refer to. It sequences the services and fires FSM
 /// events; the FSM stays the single source of truth for *where* the flow
@@ -85,6 +127,10 @@ Future<FetchedImage?> defaultImageFetcher(String url) async {
 /// to a plain behaviour — any accepted command means "apply", the visible
 /// text is read as-is, images are only counted, the PDF text is read
 /// verbatim — so the app stays usable, and testable, without a key.
+///
+/// After an error the user can say "retry" (audit 1.6): a failed submit
+/// resumes at the final review; anything else starts a fresh run. At most
+/// [maxVoiceRetries] per run.
 class ApplicationFlowController extends ChangeNotifier {
   ApplicationFlowController({
     required this.fsm,
@@ -94,7 +140,6 @@ class ApplicationFlowController extends ChangeNotifier {
     required this.webView,
     required this.pdfReader,
     required this.profileService,
-    required this.filePicker,
     this.captchaHandler,
     this.openAi,
     FuzzyMatchService? fuzzy,
@@ -102,6 +147,10 @@ class ApplicationFlowController extends ChangeNotifier {
     this.formPdfPathProvider,
     this.askUserToChooseFormPdf = false,
     SubmitHook? submitHook,
+    this.settleDelay = Duration.zero,
+    this.settleMaxWait = const Duration(seconds: 8),
+    this.awaitFileChooser = defaultAwaitFileChooser,
+    this.maxVoiceRetries = 2,
   }) : _fuzzy = fuzzy ?? FuzzyMatchService() {
     _gate = VoiceCommandGate(
       fsm: fsm,
@@ -109,6 +158,20 @@ class ApplicationFlowController extends ChangeNotifier {
       tts: tts,
       preferences: preferences,
       narrate: narrate,
+      onListeningChanged: _setListening,
+      playCues: true,
+    );
+    // One attempt only: after an error the user is asked once whether to
+    // retry, and silence simply means "no".
+    _retryGate = VoiceCommandGate(
+      fsm: fsm,
+      speech: speech,
+      tts: tts,
+      preferences: preferences,
+      maxAttempts: 1,
+      narrate: narrate,
+      onListeningChanged: _setListening,
+      playCues: true,
     );
     submitHook?.action = submitApplication;
   }
@@ -119,7 +182,6 @@ class ApplicationFlowController extends ChangeNotifier {
   final WebViewControllerService webView;
   final PdfReaderService pdfReader;
   final ApplicantProfileService profileService;
-  final FilePickerService filePicker;
   final CaptchaCheckpointHandler? captchaHandler;
   final OpenAiService? openAi;
   final Future<FetchedImage?> Function(String url) imageFetcher;
@@ -131,8 +193,24 @@ class ApplicationFlowController extends ChangeNotifier {
   /// True on a real run, where the user has to pick the PDF themselves.
   final bool askUserToChooseFormPdf;
 
+  /// How long the page must be quiet (no DOM mutations) before it is read;
+  /// zero disables the wait (mocked runs, tests). A single-page app is
+  /// often half-rendered at `onLoadStop` (spec.md §5 perceive → act →
+  /// wait-for-stable), and this is what stops the flow reading that.
+  final Duration settleDelay;
+
+  /// Upper bound on the settle wait.
+  final Duration settleMaxWait;
+
+  /// Completes when the system file chooser has closed (see
+  /// [defaultAwaitFileChooser]).
+  final Future<void> Function() awaitFileChooser;
+
+  final int maxVoiceRetries;
+
   final FuzzyMatchService _fuzzy;
   late final VoiceCommandGate _gate;
+  late final VoiceCommandGate _retryGate;
   bool _running = false;
   Map<String, String> _profile = {};
   final Map<String, String> _values = {};
@@ -145,6 +223,21 @@ class ApplicationFlowController extends ChangeNotifier {
 
   /// Text of the most recent spoken line ('' before the first one).
   String lastNarration = '';
+
+  bool _isListening = false;
+
+  /// True exactly while the recognizer is open (fed by
+  /// [VoiceCommandGate.onListeningChanged], the only place `listen()` is
+  /// called). The mic button reads this, not the FSM state, because the
+  /// mic is also open during in-flow confirmations while the FSM sits in
+  /// `FillingForm`/`FinalReview`.
+  bool get isListening => _isListening;
+
+  void _setListening(bool value) {
+    if (_isListening == value) return;
+    _isListening = value;
+    notifyListeners();
+  }
 
   bool get isRunning => _running;
 
@@ -182,13 +275,41 @@ class ApplicationFlowController extends ChangeNotifier {
       _values.clear();
       notifyListeners();
       await _run();
+      await _retryByVoice();
     } catch (e, st) {
       Logger.log('flow: unexpected failure: $e\n$st');
-      await _fail(e.toString());
+      await _fail(_n.errUnexpected);
     } finally {
+      _setListening(false);
       _running = false;
       notifyListeners();
     }
+  }
+
+  /// Offers "say retry" after an error and acts on it (audit 1.6b).
+  Future<void> _retryByVoice() async {
+    var retries = 0;
+    while (fsm.state is ErrorState && retries < maxVoiceRetries) {
+      final error = fsm.state as ErrorState;
+      if (!await _askToRetry()) return;
+      retries++;
+      if (error.failedState is FinalReviewState) {
+        // Submit failed: everything is already filled, resume at the review.
+        await fsm.transition(const RetryRequested());
+        await _finalReviewAndSubmit();
+      } else {
+        await fsm.transition(const FlowReset());
+        _values.clear();
+        await _run();
+      }
+    }
+  }
+
+  Future<bool> _askToRetry() async {
+    if (_gate.speechUnavailable) return false; // saying "retry" can't help
+    await narrate(_n.retryPrompt);
+    final reply = await _retryGate.listenConfident();
+    return reply != null && isRetry(reply);
   }
 
   Future<void> _run() async {
@@ -210,11 +331,13 @@ class ApplicationFlowController extends ChangeNotifier {
     await fsm.transition(const TargetLoaded());
 
     await narrate(_n.readingPage);
+    await _waitForStable();
     var dom = await webView.readDom();
     switch (await _handleCaptcha()) {
       case _Outcome.aborted:
         return;
       case _Outcome.confirmed:
+        await _waitForStable();
         dom = await webView.readDom();
       case _Outcome.skipped:
         break;
@@ -226,7 +349,7 @@ class ApplicationFlowController extends ChangeNotifier {
     // Checkpoint 1: the user confirms this is the right listing.
     await narrate(_n.confirmListing);
     final listingReply = await _gate.listenConfident();
-    if (listingReply == null) return _fail('No response to the listing question.');
+    if (listingReply == null) return _fail(_n.errNoListingReply);
     if (!isAffirmative(listingReply)) {
       await narrate(_n.listingDeclined);
       await fsm.transition(const FlowReset());
@@ -235,7 +358,7 @@ class ApplicationFlowController extends ChangeNotifier {
 
     if (!await _readForm()) return;
 
-    _fields = dom.labeledFields;
+    _fields = _formFields(dom);
     _profile = await _loadProfile();
     await fsm.transition(
       ListingConfirmed(
@@ -264,11 +387,16 @@ class ApplicationFlowController extends ChangeNotifier {
       }
     }
 
-    // Final review, with the edit loop-back and checkpoint 2.
+    await _finalReviewAndSubmit();
+  }
+
+  /// Final review with the edit loop-back and checkpoint 2, then submit.
+  /// Re-entered after a voice retry of a failed submit.
+  Future<void> _finalReviewAndSubmit() async {
     while (fsm.state is FinalReviewState) {
       await narrate(_n.finalReview(_summary()));
       final reply = await _gate.listenConfident();
-      if (reply == null) return _fail('No response at the final review.');
+      if (reply == null) return _fail(_n.errNoReviewReply);
 
       // Edit is checked before "yes" so "correct my phone" is an edit,
       // not a confirmation.
@@ -326,7 +454,7 @@ class ApplicationFlowController extends ChangeNotifier {
       await narrate(repromptMessage(language));
       await fsm.transition(const FlowReset());
     }
-    await _fail("Couldn't understand the request.");
+    await _fail(_n.errNoRequest);
     return null;
   }
 
@@ -359,7 +487,7 @@ class ApplicationFlowController extends ChangeNotifier {
     if (await attempt()) return result;
     final before = fsm.state;
     await fsm.transition(
-      ErrorOccurred("Couldn't reach the AI service.", retryAction: attempt),
+      ErrorOccurred(_n.errAiUnavailable, retryAction: attempt),
     );
     if (fsm.state != before) {
       await _reportError();
@@ -385,11 +513,67 @@ class ApplicationFlowController extends ChangeNotifier {
     await narrate(_n.pageRetrying);
     final before = fsm.state;
     await fsm.transition(
-      ErrorOccurred('The page did not load.', retryAction: attempt),
+      ErrorOccurred(_n.errPageLoad, retryAction: attempt),
     );
     if (fsm.state == before) return true;
     await _reportError();
     return false;
+  }
+
+  /// Waits until the page has stopped changing (no DOM mutation for
+  /// [settleDelay], at most [settleMaxWait]) so a single-page app has
+  /// finished rendering before it is read.
+  Future<void> _waitForStable() async {
+    if (settleDelay == Duration.zero) return;
+    final quiet = Completer<void>();
+    Timer? timer;
+    void arm() {
+      timer?.cancel();
+      timer = Timer(settleDelay, () {
+        if (!quiet.isCompleted) quiet.complete();
+      });
+    }
+
+    final cap = Timer(settleMaxWait, () {
+      if (!quiet.isCompleted) quiet.complete();
+    });
+    final subscription = webView.domChangedEvents.listen((_) => arm());
+    arm();
+    try {
+      await quiet.future;
+    } finally {
+      await subscription.cancel();
+      timer?.cancel();
+      cap.cancel();
+    }
+  }
+
+  /// The fields the per-field loop should ask about: labeled inputs minus
+  /// the page's own search box and submit button, and minus input types
+  /// the text-fill path cannot fill correctly (hidden, buttons,
+  /// checkboxes, radios). A listing page carries plenty of unrelated
+  /// inputs (search, newsletter, login) that must not be read out as if
+  /// they were the application form.
+  List<DomFormField> _formFields(DomSnapshot dom) {
+    const skipTypes = {
+      'hidden',
+      'submit',
+      'button',
+      'image',
+      'reset',
+      'checkbox',
+      'radio',
+    };
+    final exclude = {
+      for (final f in dom.searchCandidates) f.elementId,
+      for (final f in dom.submitCandidates) f.elementId,
+    };
+    return [
+      for (final f in dom.labeledFields)
+        if (!exclude.contains(f.elementId) &&
+            !skipTypes.contains((f.type ?? '').toLowerCase()))
+          f,
+    ];
   }
 
   Future<void> _narrateListing(DomSnapshot dom) async {
@@ -473,8 +657,8 @@ class ApplicationFlowController extends ChangeNotifier {
       }
       return true;
     } on PdfParseException catch (e) {
-      await narrate(_n.pdfFailed);
-      await _fail(e.message);
+      Logger.log('flow: PDF parse failed: ${e.message}');
+      await _fail(_n.pdfFailed);
       return false;
     }
   }
@@ -495,16 +679,16 @@ class ApplicationFlowController extends ChangeNotifier {
 
   // --- CAPTCHA (checkpoint 3) ------------------------------------------------
 
-  /// Checks for a CAPTCHA. `skipped` = none found, `confirmed` = handled
-  /// (audio challenge, or the user solved it and said "continue"),
-  /// `aborted` = the user never resumed.
+  /// Checks for a CAPTCHA. `skipped` = none found, `confirmed` = the user
+  /// solved it (by ear via the audio challenge, or otherwise) and said
+  /// "continue", `aborted` = the user never resumed.
   Future<_Outcome> _handleCaptcha() async {
     final handler = captchaHandler;
     if (handler == null) return _Outcome.skipped;
     if (!await handler.checkAndHandle(fsm)) return _Outcome.skipped;
     if (fsm.state is! CaptchaPendingState) return _Outcome.confirmed;
 
-    lastNarration = await handler.handOffText();
+    lastNarration = handler.lastSpoken ?? await handler.handOffText();
     notifyListeners();
     for (var i = 0; i < 5; i++) {
       final reply = await _gate.listenConfident();
@@ -514,7 +698,7 @@ class ApplicationFlowController extends ChangeNotifier {
         return _Outcome.confirmed;
       }
     }
-    await _fail('The CAPTCHA was not resolved.');
+    await _fail(_n.errCaptcha);
     return _Outcome.aborted;
   }
 
@@ -535,7 +719,7 @@ class ApplicationFlowController extends ChangeNotifier {
       offerSaved && key != null ? _profile[key] : null,
     );
     if (value == null) {
-      await _fail('No answer was given for $label.');
+      await _fail(_n.errNoAnswer(label));
       return _Outcome.aborted;
     }
 
@@ -547,7 +731,7 @@ class ApplicationFlowController extends ChangeNotifier {
       await narrate(_n.fillFailed(label));
       final before = fsm.state;
       await fsm.transition(
-        ErrorOccurred("Couldn't fill in $label.", retryAction: attempt),
+        ErrorOccurred(_n.errFill(label), retryAction: attempt),
       );
       if (fsm.state != before) {
         await _reportError();
@@ -558,16 +742,39 @@ class ApplicationFlowController extends ChangeNotifier {
     return _Outcome.confirmed;
   }
 
+  /// Attaches a CV through the page's own file chooser. Browsers cannot
+  /// have a file input set for them, so the CV saved in Settings cannot be
+  /// attached automatically — the user picks it again. That switches the
+  /// screen to Android's file picker, so it is announced FIRST (a blind
+  /// user must not land in an unannounced system screen), and afterwards
+  /// the page is asked which file it actually holds before anything is
+  /// claimed as attached.
   Future<_Outcome> _attachCv(DomFormField field) async {
-    final path = _profile['cvFilePath'] ?? await filePicker.pickCvFile();
-    if (path == null) {
+    await narrate(_n.cvChooserAnnouncement);
+    if (!await webView.triggerFileChooser(field.elementId)) {
       await narrate(_n.cvNone);
       _values[field.elementId] = '-';
       return _Outcome.skipped;
     }
-    await narrate(_n.cvChosen(path.split(RegExp(r'[\\/]')).last));
-    await webView.triggerFileChooser(field.elementId);
-    _values[field.elementId] = path;
+    await awaitFileChooser();
+
+    // The WebView hands the chosen file to the page a moment after the
+    // chooser closes, so poll briefly.
+    final poll = settleDelay == Duration.zero
+        ? Duration.zero
+        : const Duration(milliseconds: 400);
+    String? name;
+    for (var i = 0; i < 4 && name == null; i++) {
+      if (i > 0) await Future<void>.delayed(poll);
+      name = await webView.getFileInputName(field.elementId);
+    }
+    if (name == null) {
+      await narrate(_n.cvNotAttached);
+      _values[field.elementId] = '-';
+      return _Outcome.skipped;
+    }
+    await narrate(_n.cvChosen(name));
+    _values[field.elementId] = name;
     return _Outcome.confirmed;
   }
 
@@ -716,38 +923,45 @@ class ApplicationFlowController extends ChangeNotifier {
 
   /// The one real, side-effecting action: clicks the page's submit button.
   /// Wired in as the FSM's `performRealSubmit`, so it only ever runs from
-  /// `SubmitConfirmed` in `FinalReviewState`. Throws (the FSM then enters
-  /// `ErrorState`) rather than click something it isn't sure about.
+  /// `SubmitConfirmed` in `FinalReviewState`. Throws a [FlowFailure] with a
+  /// message in the user's language (the FSM then enters `ErrorState`)
+  /// rather than click something it isn't sure about.
   Future<void> submitApplication() async {
+    await _waitForStable();
     final dom = await webView.readDom(); // fresh node ids
     final candidates = dom.submitCandidates;
-    if (candidates.isEmpty) {
-      throw StateError('No submit button was found on the page.');
-    }
+    if (candidates.isEmpty) throw FlowFailure(_n.errSubmitNoButton);
 
     var pick = candidates.first;
     if (candidates.length > 1) {
       final second = candidates[1];
       final clearlyFirst =
           (pick.heuristicScore ?? 0) > (second.heuristicScore ?? 0);
+
+      ElementMatchResult? match;
       final ai = _ai;
       if (ai != null) {
-        final match = await ai.matchElement(
-          targetDescription: 'button that submits the job application',
-          candidates: candidates,
-        );
-        if (match.isConfident(AppConstants.elementMatchConfidenceThreshold)) {
-          pick = candidates.firstWhere((c) => c.elementId == match.elementId);
-        } else if (!clearlyFirst) {
-          throw StateError('Not sure which button submits the application.');
+        try {
+          match = await ai.matchElement(
+            targetDescription: 'button that submits the job application',
+            candidates: candidates,
+          );
+        } on OpenAiException catch (e) {
+          // AI down: fall back to the heuristic ranking alone.
+          Logger.log('flow: submit matching failed, using heuristics: $e');
         }
+      }
+      if (match != null &&
+          match.isConfident(AppConstants.elementMatchConfidenceThreshold)) {
+        final id = match.elementId;
+        pick = candidates.firstWhere((c) => c.elementId == id);
       } else if (!clearlyFirst) {
-        throw StateError('Not sure which button submits the application.');
+        throw FlowFailure(_n.errSubmitUnsure);
       }
     }
 
     if (!await webView.clickElement(pick.elementId)) {
-      throw StateError('The submit button could not be clicked.');
+      throw FlowFailure(_n.errSubmitClick);
     }
   }
 

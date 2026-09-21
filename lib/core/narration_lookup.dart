@@ -111,14 +111,91 @@ class FlowNarration {
   String failure(String message) =>
       _s('Something went wrong: $message', 'Đã xảy ra lỗi: $message');
 
+  /// Spoken after an error: how to retry by voice (audit 1.6b).
+  String get retryPrompt => _s(
+    "Say 'retry' to try again, or press the button to start over.",
+    "Nói 'thử lại' để thử lại, hoặc nhấn nút để bắt đầu lại.",
+  );
+
+  // Error messages carried by `ErrorState` — kept here so a Vietnamese
+  // user never hears an English sentence inside `failure(...)`.
+  String get errPageLoad =>
+      _s('The page did not load.', 'Trang không tải được.');
+  String get errAiUnavailable => _s(
+    "Couldn't reach the AI service.",
+    'Không kết nối được dịch vụ AI.',
+  );
+  String get errNoRequest =>
+      _s("Couldn't understand the request.", 'Tôi không hiểu yêu cầu.');
+  String get errVoice => _s(
+    "Couldn't understand the voice command.",
+    'Tôi không hiểu lệnh giọng nói.',
+  );
+  String get errSpeechUnavailable => _s(
+    'Speech recognition is unavailable.',
+    'Không dùng được nhận dạng giọng nói.',
+  );
+  String get errNoListingReply => _s(
+    'No response to the listing question.',
+    'Không nhận được câu trả lời về tin tuyển dụng.',
+  );
+  String get errNoReviewReply => _s(
+    'No response at the final review.',
+    'Không nhận được câu trả lời ở bước xem lại.',
+  );
+  String get errCaptcha =>
+      _s('The CAPTCHA was not resolved.', 'CAPTCHA chưa được giải.');
+  String errNoAnswer(String label) =>
+      _s('No answer was given for $label.', 'Chưa có câu trả lời cho $label.');
+  String errFill(String label) =>
+      _s("Couldn't fill in $label.", 'Không điền được $label.');
+  String get errSubmitNoButton => _s(
+    'No submit button was found on the page.',
+    'Không tìm thấy nút nộp đơn trên trang.',
+  );
+  String get errSubmitUnsure => _s(
+    'Not sure which button submits the application.',
+    'Không chắc nút nào dùng để nộp đơn.',
+  );
+  String get errSubmitClick => _s(
+    'The submit button could not be clicked.',
+    'Không nhấn được nút nộp đơn.',
+  );
+  String get errUnexpected =>
+      _s('An unexpected problem occurred.', 'Đã xảy ra sự cố không mong muốn.');
+
+  // --- microphone cues and labels (audit: mic UX) ----------------------
+
+  String get micLabelIdle =>
+      _s('Start voice command', 'Bắt đầu ra lệnh bằng giọng nói');
+  String get micLabelListening => _s('Listening…', 'Đang nghe…');
+
+  /// Spoken just before the recognizer opens.
+  String get micCueStart => _s('Listening', 'Đang nghe');
+
+  /// Spoken when speech was captured; on silence the spoken re-prompt is
+  /// the stop cue.
+  String get micCueStop => _s('Got it', 'Đã nghe rõ');
+
+  // --- home / platform ---------------------------------------------------
+
+  String get settingsButton => _s('Settings', 'Cài đặt');
+
+  String get unsupportedPlatform => _s(
+    'This app is designed for Android — please run on an Android device.',
+    'Ứng dụng này được thiết kế cho Android — hãy chạy trên thiết bị Android.',
+  );
+
   // --- CAPTCHA (checkpoint 3) ------------------------------------------
 
   /// Verbatim from 01-intent.md section 4 (Vietnamese).
   String get captchaHandOff => _s(captchaHandOffEn, captchaHandOffVi);
 
-  String get captchaAudioUsed => _s(
-    'I used the CAPTCHA audio option.',
-    'Đã dùng tùy chọn âm thanh cho CAPTCHA',
+  /// The audio button was pressed; the challenge still has to be solved by
+  /// the user, so this is a hand-off too (audit 1.5).
+  String get captchaAudioOpened => _s(
+    "I opened the CAPTCHA's audio option. Listen, enter the code, then say 'continue'.",
+    "Tôi đã mở tùy chọn âm thanh của CAPTCHA. Hãy nghe, nhập mã, rồi nói 'tiếp tục'.",
   );
 
   // --- reading the listing ----------------------------------------------
@@ -232,6 +309,20 @@ class FlowNarration {
   String get cvNone => _s(
     'No CV file chosen, skipping it.',
     'Chưa chọn file CV, bỏ qua mục này.',
+  );
+
+  /// Spoken BEFORE the page's own file chooser opens: a blind user must
+  /// not land in an unannounced system picker. The page cannot be given
+  /// the CV saved in Settings (browsers block that), so the user picks it
+  /// again here (audit 1.4b).
+  String get cvChooserAnnouncement => _s(
+    "This form needs your CV file. Your phone's file picker will open now. Choose your CV file again; it will return to the app when you're done.",
+    'Mẫu này cần file CV của bạn. Trình chọn tệp của điện thoại sẽ mở ngay bây giờ. Hãy chọn lại file CV; sau đó ứng dụng sẽ tự quay lại.',
+  );
+
+  String get cvNotAttached => _s(
+    'No CV file was attached, skipping it.',
+    'Chưa có file CV nào được đính kèm, bỏ qua mục này.',
   );
 
   /// Milestone 24: the form has no field for something the flow needs.

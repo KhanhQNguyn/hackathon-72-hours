@@ -98,7 +98,11 @@ class _SpikeHarnessScreenState extends State<SpikeHarnessScreen> {
       await _webViewControllerService.loadTarget(url);
       Logger.log('spike_harness: loadTarget($url) requested');
     } catch (e) {
+      // Shown on screen, not only logged: on a platform without the
+      // WebMessageListener (anything but Android) this is the error that
+      // explains why nothing loads (audit 1.1).
       Logger.log('spike_harness: loadTarget failed: $e');
+      if (mounted) setState(() => _lastResult = 'loadTarget failed: $e');
     }
   }
 

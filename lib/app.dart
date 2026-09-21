@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'core/app_config.dart';
+import 'core/platform_support.dart';
 import 'core/theme.dart';
 import 'mocks/fake_pdf_reader_service.dart';
 import 'mocks/fake_webview_controller_service.dart';
@@ -19,6 +20,7 @@ import 'services/speech_service.dart';
 import 'services/tts_service.dart';
 import 'services/webview_controller_service.dart';
 import 'ui/screens/home_screen.dart';
+import 'ui/screens/unsupported_platform_screen.dart';
 
 /// MaterialApp root widget. See spec.md §5 (UI layer is MVVM, with the
 /// FSM as the "ViewModel", exposed here via `provider`).
@@ -30,12 +32,24 @@ import 'ui/screens/home_screen.dart';
 /// used and the page is shown on the home screen. Providers are lazy, so
 /// nothing touches a platform plugin until a screen reads it.
 class App extends StatelessWidget {
-  const App({super.key, this.useMockServices = AppConfig.useMockServices});
+  const App({
+    super.key,
+    this.useMockServices = AppConfig.useMockServices,
+    this.platform,
+  });
 
   final bool useMockServices;
 
+  /// Overrides the detected platform (tests only).
+  final TargetPlatform? platform;
+
   @override
   Widget build(BuildContext context) {
+    // Android-first build: say so plainly rather than let a desktop run hit
+    // missing-plugin errors later (audit 1.1).
+    if (!isSupportedPlatform(platform)) {
+      return const MaterialApp(home: UnsupportedPlatformScreen());
+    }
     return MultiProvider(
       providers: [
         Provider<PreferencesService>(create: (_) => PreferencesService()),
@@ -86,7 +100,6 @@ class App extends StatelessWidget {
             webView: ctx.read<WebViewControllerService>(),
             pdfReader: ctx.read<PdfReaderService>(),
             profileService: ctx.read<ApplicantProfileService>(),
-            filePicker: ctx.read<FilePickerService>(),
             captchaHandler: ctx.read<CaptchaCheckpointHandler>(),
             openAi: ctx.read<OpenAiService>(),
             fuzzy: ctx.read<FuzzyMatchService>(),
@@ -97,6 +110,14 @@ class App extends StatelessWidget {
                 ? null
                 : ctx.read<FilePickerService>().pickPdfFile,
             askUserToChooseFormPdf: !useMockServices,
+            // Real pages render late (SPA): wait for a quiet DOM. The
+            // mock has no page and no system file chooser to wait for.
+            settleDelay: useMockServices
+                ? Duration.zero
+                : const Duration(milliseconds: 800),
+            awaitFileChooser: useMockServices
+                ? () async {}
+                : defaultAwaitFileChooser,
           ),
         ),
       ],

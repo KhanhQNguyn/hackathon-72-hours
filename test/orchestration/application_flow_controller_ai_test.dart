@@ -3,6 +3,7 @@ import 'package:job_access_assist/core/narration_lookup.dart';
 import 'package:job_access_assist/models/dom_snapshot.dart';
 import 'package:job_access_assist/models/element_match_result.dart';
 import 'package:job_access_assist/models/openai_results.dart';
+import 'package:job_access_assist/orchestration/application_flow_controller.dart';
 import 'package:job_access_assist/orchestration/application_flow_fsm.dart';
 
 import '../mocks/test_doubles.dart';
@@ -266,7 +267,7 @@ void main() {
       await h.controller.start();
 
       expect(h.fsm.state, isA<ErrorState>());
-      expect(h.tts.spoken.last, contains('could not be clicked'));
+      expect(h.tts.spoken.any((s) => s.contains('could not be clicked')), isTrue);
     });
 
     const s1 = DomFormField(
@@ -291,7 +292,7 @@ void main() {
     test('no submit button on the page throws', () async {
       final h = FlowHarness();
       h.web.snapshotOverride = snapshotWithSubmit(const []);
-      await expectLater(h.controller.submitApplication(), throwsStateError);
+      await expectLater(h.controller.submitApplication(), throwsA(isA<FlowFailure>()));
       expect(h.web.clicked, isEmpty);
     });
 
@@ -305,7 +306,7 @@ void main() {
     test('tied candidates and no AI: refuses to guess', () async {
       final h = FlowHarness();
       h.web.snapshotOverride = snapshotWithSubmit(const [s1, s3]);
-      await expectLater(h.controller.submitApplication(), throwsStateError);
+      await expectLater(h.controller.submitApplication(), throwsA(isA<FlowFailure>()));
       expect(h.web.clicked, isEmpty);
     });
 
@@ -332,7 +333,7 @@ void main() {
         );
       final h = FlowHarness(ai: ai);
       h.web.snapshotOverride = snapshotWithSubmit(const [s1, s3]);
-      await expectLater(h.controller.submitApplication(), throwsStateError);
+      await expectLater(h.controller.submitApplication(), throwsA(isA<FlowFailure>()));
       expect(h.web.clicked, isEmpty);
     });
   });

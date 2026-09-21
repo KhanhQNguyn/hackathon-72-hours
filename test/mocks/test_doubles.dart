@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:job_access_assist/mocks/fake_pdf_reader_service.dart';
 import 'package:job_access_assist/mocks/fake_webview_controller_service.dart';
+import 'package:job_access_assist/models/captcha_check_result.dart';
 import 'package:job_access_assist/models/dom_snapshot.dart';
 import 'package:job_access_assist/models/element_match_result.dart';
 import 'package:job_access_assist/models/fill_field_result.dart';
@@ -104,7 +105,34 @@ class SpyWebView extends FakeWebViewControllerService {
   final List<String> clicked = [];
   bool failFills = false;
   bool clickSucceeds = true;
+
+  /// What the page reports as attached after the file chooser closes;
+  /// `null` = the user cancelled / nothing attached.
+  String? attachedFileName = 'cv.pdf';
+  bool chooserOpens = true;
+
+  /// Fails the next N `clickElement` calls, then succeeds.
+  int failClicks = 0;
+
+  /// Fails the next N `fillField` calls, then succeeds.
+  int failFillTimes = 0;
+
+  /// Called when the page's file chooser is triggered.
+  void Function()? onTriggerFileChooser;
   DomSnapshot? snapshotOverride;
+
+  bool captchaPresent = false;
+  bool audioButtonFound = false;
+  int captchaChecks = 0;
+
+  @override
+  Future<CaptchaCheckResult> detectCaptcha() async {
+    captchaChecks++;
+    return CaptchaCheckResult(detected: captchaPresent);
+  }
+
+  @override
+  Future<bool> tryResolveCaptchaViaAudio() async => audioButtonFound;
 
   @override
   Future<DomSnapshot> readDom() async =>
@@ -112,6 +140,13 @@ class SpyWebView extends FakeWebViewControllerService {
 
   @override
   Future<FillFieldResult> fillField(String nodeId, String value) async {
+    if (failFillTimes > 0) {
+      failFillTimes--;
+      return const FillFieldResult(
+        success: false,
+        failureReason: 'value_did_not_stick',
+      );
+    }
     if (failFills) {
       return const FillFieldResult(
         success: false,
@@ -124,13 +159,21 @@ class SpyWebView extends FakeWebViewControllerService {
 
   @override
   Future<bool> triggerFileChooser(String nodeId) async {
+    onTriggerFileChooser?.call();
     fileChooserNodes.add(nodeId);
-    return true;
+    return chooserOpens;
   }
+
+  @override
+  Future<String?> getFileInputName(String nodeId) async => attachedFileName;
 
   @override
   Future<bool> clickElement(String nodeId) async {
     clicked.add(nodeId);
+    if (failClicks > 0) {
+      failClicks--;
+      return false;
+    }
     return clickSucceeds;
   }
 }
@@ -230,40 +273,51 @@ class FlowHarness {
       'email': 'alex@example.com',
       'cvFilePath': '/storage/cv.pdf',
     },
-    String? pickerPath,
     String language = 'en',
     this.ai,
     bool wireSubmitHook = false,
+    Duration settleDelay = Duration.zero,
+    Duration settleMaxWait = const Duration(seconds: 8),
+    int maxVoiceRetries = 2,
+    SpeechService? speech,
   }) : tts = RecordingTts(),
-       web = SpyWebView(),
-       picker = StubFilePicker(pickerPath) {
+       web = SpyWebView() {
     final hook = wireSubmitHook ? SubmitHook() : null;
     fsm = ApplicationFlowFsm(
       performRealSubmit: hook != null ? hook.run : () async => submitCalls++,
     );
     controller = ApplicationFlowController(
       fsm: fsm,
-      speech: ScriptedSpeech(script),
+      speech: speech ?? ScriptedSpeech(script),
       tts: tts,
       preferences: StubPrefs(language),
       webView: web,
       pdfReader: FakePdfReaderService(),
       profileService: MemoryProfileService(profile),
-      filePicker: picker,
-      captchaHandler: CaptchaCheckpointHandler(web, tts),
+      captchaHandler: CaptchaCheckpointHandler(
+        web,
+        tts,
+        getLanguage: StubPrefs(language).getLanguagePref,
+      ),
       openAi: ai,
       imageFetcher: (url) async => FetchedImage(Uint8List.fromList(_tinyImage), 'image/png'),
       submitHook: hook,
+      settleDelay: settleDelay,
+      settleMaxWait: settleMaxWait,
+      maxVoiceRetries: maxVoiceRetries,
+      awaitFileChooser: () async {
+        chooserWaits++;
+      },
     );
   }
 
   final RecordingTts tts;
   final SpyWebView web;
-  final StubFilePicker picker;
   final FakeOpenAi? ai;
   late final ApplicationFlowFsm fsm;
   late final ApplicationFlowController controller;
   int submitCalls = 0;
+  int chooserWaits = 0;
 }
 
 /// A job listing with the given submit candidates, for submit-choice tests.

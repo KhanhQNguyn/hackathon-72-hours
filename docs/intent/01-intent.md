@@ -144,3 +144,4 @@ A narrower, distinct feature, new on top of the original pivot: within the **sam
 - [ ] Rubric weights/breakdown (Section 8) — fill in once published
 - [x] Target platform: **VietnamWorks** (confirmed)
 - [ ] Specific VietnamWorks job listing and PDF application-form sample to test against (Section 7)
+- [ ] **Audit 2026-09-22 findings** (see `audit-2026-09-22.md`): (a) spike A1b result still not recorded — needs an Android device; (b) the flow does not yet navigate from the listing page to the application form or run a search step — the largest remaining gap for the demo; (c) whether a scripted `input.click()` opens the file chooser on the real WebView is unverified — the live CV upload may need a TalkBack-activation fallback

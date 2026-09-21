@@ -37,27 +37,28 @@ class CaptchaCheckpointHandler {
   /// not rephrase.
   static const String handOffNarration = captchaHandOffVi;
 
-  static const String audioResolvedNarration =
-      'Đã dùng tùy chọn âm thanh cho CAPTCHA';
+  /// What was last spoken by [checkAndHandle], so the caller can mirror it
+  /// on screen.
+  String? lastSpoken;
 
-  /// Checks for a CAPTCHA and handles it if present. Returns true if a
-  /// CAPTCHA was found (whether auto-resolved via audio or handed off to
-  /// the user), false if none was detected — callers use this to decide
-  /// whether to proceed with the perception pass that triggered the
-  /// check.
+  /// Checks for a CAPTCHA and hands it to the user if present. Returns true
+  /// if a CAPTCHA was found, false if none was detected.
+  ///
+  /// Either way a CAPTCHA is found the FSM pauses (`CaptchaPendingState`)
+  /// until the caller sees "continue". Pressing the audio-challenge button
+  /// only *opens* the accessible challenge — somebody still has to listen
+  /// and type the code — so it is not treated as solved (audit 1.5).
   Future<bool> checkAndHandle(ApplicationFlowFsm fsm) async {
     final check = await _webViewControllerService.detectCaptcha();
     if (!check.detected) return false;
 
-    final resolvedViaAudio =
+    final openedAudio =
         await _webViewControllerService.tryResolveCaptchaViaAudio();
-    if (resolvedViaAudio) {
-      await _ttsService.speak((await _narration()).captchaAudioUsed);
-      return true;
-    }
+    final n = await _narration();
+    lastSpoken = openedAudio ? n.captchaAudioOpened : n.captchaHandOff;
 
     await fsm.transition(const CaptchaEncountered());
-    await _ttsService.speak(await handOffText());
+    await _ttsService.speak(lastSpoken!);
     return true;
   }
 }

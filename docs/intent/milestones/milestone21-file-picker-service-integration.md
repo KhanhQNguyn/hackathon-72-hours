@@ -25,3 +25,14 @@ Milestone 16 (the per-field fill flow this plugs into)
 
 ## Size
 S
+
+## Correction (audit 2026-09-22)
+The instruction above to wire `flutter_inappwebview`'s `onShowFileChooser`
+cannot be followed as written: in `flutter_inappwebview` 6.1.5 /
+`flutter_inappwebview_android` 1.1.3 the chooser is implemented natively
+(`InAppWebViewChromeClient.onShowFileChooser`, which launches its own picker
+intent) and exposes **no Dart callback**. So `triggerFileChooser()` (JS
+`.click()` on the input) is the entire integration. The flow announces the
+chooser before opening it and confirms afterwards via
+`getFileInputName()` that a file was really attached. See
+`audit-2026-09-22.md` §1.4(b).

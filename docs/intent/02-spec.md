@@ -179,3 +179,7 @@ No user accounts, no server-side persistence, nothing else to model. This is a t
 - [x] PDF-parsing library — **confirmed**: `syncfusion_flutter_pdf` (Section 1)
 - [x] schema.md/endpoints.md — **not needed**, confirmed. No backend; the only structured local data is the `sqflite` applicant-profile table documented in Section 8.
 - [ ] TalkBack pass on the app's own UI before final demo recording
+- [x] **File chooser mechanism — resolved (audit 2026-09-22):** in `flutter_inappwebview` 6.1.5 / `_android` 1.1.3 the chooser is native (`InAppWebViewChromeClient.onShowFileChooser`) with **no Dart hook**; `triggerFileChooser()` (JS `click()`) is the whole integration, and the flow announces it first and verifies the attached file afterwards. Milestone 21's "wire `onShowFileChooser`" note was wrong and is corrected there. Still needs a device: whether a scripted click satisfies the WebView's user-activation requirement
+- [x] **Platform support table — recorded (audit 1.1):** `sqflite` and `flutter_inappwebview`'s `WebMessageListener` are Android(/iOS/macOS)-only; this is an Android-first build and the app now says so at startup on other platforms
+- [ ] AI prompts (milestones 36–40) verified only against a scripted HTTP client — needs a live API key
+- [ ] Mic cues and states (`VoiceCommandGate.onListeningChanged`, `VoiceTriggerButton`) verified in widget tests only — needs a device to judge audibility

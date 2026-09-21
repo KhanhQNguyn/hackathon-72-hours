@@ -25,7 +25,6 @@ Widget _app(ApplicationFlowFsm fsm) {
           webView: h.web,
           pdfReader: FakePdfReaderService(),
           profileService: MemoryProfileService(),
-          filePicker: StubFilePicker(),
         ),
       ),
     ],
@@ -93,15 +92,15 @@ void main() {
     await fsm.transition(const TriggerPressed());
     await tester.pump();
 
-    final button = find.bySemanticsLabel('Start voice command');
+    final button = find.bySemanticsLabel('Working...');
     expect(
       tester.getSemantics(button).flagsCollection.isEnabled,
       Tristate.isFalse,
     );
-    final fab = tester.widget<FloatingActionButton>(
-      find.byType(FloatingActionButton),
+    final voiceButton = tester.widget<FilledButton>(
+      find.byType(FilledButton),
     );
-    expect(fab.onPressed, isNull);
+    expect(voiceButton.onPressed, isNull);
     handle.dispose();
   });
 }

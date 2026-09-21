@@ -20,7 +20,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _Strings {
   final String title, language, profile, name, phone, email, cv, cvNone, save;
-  final String saved, saveFailed, pickFailed;
+  final String saved, saveFailed, pickFailed, cvPicked, loadFailed;
   const _Strings({
     required this.title,
     required this.language,
@@ -34,6 +34,8 @@ class _Strings {
     required this.saved,
     required this.saveFailed,
     required this.pickFailed,
+    required this.cvPicked,
+    required this.loadFailed,
   });
 }
 
@@ -50,6 +52,8 @@ const _en = _Strings(
   saved: 'Profile saved',
   saveFailed: 'Could not save the profile',
   pickFailed: 'Could not open the file picker',
+  cvPicked: 'CV file selected. Press Save profile to keep it.',
+  loadFailed: 'Could not load your saved profile',
 );
 
 const _vi = _Strings(
@@ -65,6 +69,8 @@ const _vi = _Strings(
   saved: 'Đã lưu hồ sơ',
   saveFailed: 'Không thể lưu hồ sơ',
   pickFailed: 'Không thể mở trình chọn tệp',
+  cvPicked: 'Đã chọn file CV. Nhấn Lưu hồ sơ để giữ lại.',
+  loadFailed: 'Không tải được hồ sơ đã lưu',
 );
 
 class _SettingsScreenState extends State<SettingsScreen> {
@@ -96,10 +102,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final profileService = context.read<ApplicantProfileService>();
     final language = await prefs.getLanguagePref();
     Map<String, String>? profile;
+    var loadFailed = false;
     try {
       profile = await profileService.getProfile();
     } catch (e) {
+      // Not silent: an empty form that looks like "no profile yet" would
+      // hide a real storage problem (audit 1.4a).
       Logger.log('settings: getProfile failed: $e');
+      loadFailed = true;
     }
     if (!mounted) return;
     setState(() {
@@ -110,6 +120,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _cvFilePath = profile?['cvFilePath'];
       _loaded = true;
     });
+    if (loadFailed) _snack(_s.loadFailed);
   }
 
   Future<void> _setLanguage(String code) async {
@@ -124,7 +135,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final picker = context.read<FilePickerService>();
     try {
       final path = await picker.pickCvFile();
-      if (path != null && mounted) setState(() => _cvFilePath = path);
+      if (path != null && mounted) {
+        setState(() => _cvFilePath = path);
+        // Picking does not save: say so, or the file looks attached when
+        // it is only on screen (audit 1.4a).
+        _snack(_s.cvPicked);
+      }
     } catch (e) {
       Logger.log('settings: pickCvFile failed: $e');
       _snack(_s.pickFailed);
@@ -181,54 +197,87 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: !_loaded
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               children: [
-                Semantics(
-                  header: true,
-                  child: Text(
-                    s.language,
-                    style: Theme.of(context).textTheme.titleMedium,
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Semantics(
+                          header: true,
+                          child: Text(
+                            s.language,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        _languageOption(AppLanguage.en, 'English'),
+                        const Divider(height: 1),
+                        _languageOption(AppLanguage.vi, 'Tiếng Việt'),
+                      ],
+                    ),
                   ),
                 ),
-                _languageOption(AppLanguage.en, 'English'),
-                _languageOption(AppLanguage.vi, 'Tiếng Việt'),
                 const SizedBox(height: 24),
-                Semantics(
-                  header: true,
-                  child: Text(
-                    s.profile,
-                    style: Theme.of(context).textTheme.titleMedium,
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Semantics(
+                          header: true,
+                          child: Text(
+                            s.profile,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: _nameController,
+                          decoration: InputDecoration(labelText: s.name),
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [AutofillHints.name],
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _phoneController,
+                          decoration: InputDecoration(labelText: s.phone),
+                          keyboardType: TextInputType.phone,
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [AutofillHints.telephoneNumber],
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _emailController,
+                          decoration: InputDecoration(labelText: s.email),
+                          keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.done,
+                          autofillHints: const [AutofillHints.email],
+                        ),
+                        const SizedBox(height: 16),
+                        OutlinedButton.icon(
+                          onPressed: _pickCv,
+                          icon: const Icon(Icons.upload_file_outlined),
+                          label: Text(s.cv),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          _cvFilePath ?? s.cvNone,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: _save,
+                          icon: const Icon(Icons.save_outlined),
+                          label: Text(s.save),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _nameController,
-                  decoration: InputDecoration(labelText: s.name),
-                  textInputAction: TextInputAction.next,
-                  autofillHints: const [AutofillHints.name],
-                ),
-                TextFormField(
-                  controller: _phoneController,
-                  decoration: InputDecoration(labelText: s.phone),
-                  keyboardType: TextInputType.phone,
-                  textInputAction: TextInputAction.next,
-                  autofillHints: const [AutofillHints.telephoneNumber],
-                ),
-                TextFormField(
-                  controller: _emailController,
-                  decoration: InputDecoration(labelText: s.email),
-                  keyboardType: TextInputType.emailAddress,
-                  textInputAction: TextInputAction.done,
-                  autofillHints: const [AutofillHints.email],
-                ),
-                const SizedBox(height: 16),
-                OutlinedButton(onPressed: _pickCv, child: Text(s.cv)),
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(_cvFilePath ?? s.cvNone),
-                ),
-                const SizedBox(height: 8),
-                FilledButton(onPressed: _save, child: Text(s.save)),
               ],
             ),
     );

@@ -111,7 +111,7 @@ void main() {
         (n) => n.submitting,
         (n) => n.done,
         (n) => n.navigateUnsupported,
-        (n) => n.captchaAudioUsed,
+        (n) => n.captchaAudioOpened,
       ];
       for (final line in lines) {
         final en = line(FlowNarration('en'));

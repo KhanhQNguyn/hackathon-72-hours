@@ -90,8 +90,22 @@
     return JSON.stringify({ success: true });
   }
 
+  // audit 1.4b — after the native chooser closes, reads back which file
+  // the page's <input type="file"> now holds, so the app can confirm
+  // something was really attached instead of assuming it.
+  function __formFiller_getFileName(nodeId) {
+    var el = document.querySelector('[data-app-node-id="' + nodeId + '"]');
+    if (!el) return JSON.stringify({ success: false, reason: 'node_stale' });
+    if (el.tagName.toLowerCase() !== 'input' || el.type !== 'file') {
+      return JSON.stringify({ success: false, reason: 'not_a_file_input' });
+    }
+    var file = el.files && el.files.length > 0 ? el.files[0] : null;
+    return JSON.stringify({ success: true, name: file ? file.name : '' });
+  }
+
   window.__formFiller_setValue = __formFiller_setValue;
   window.__formFiller_verifyValue = __formFiller_verifyValue;
   window.__formFiller_clickFileInput = __formFiller_clickFileInput;
   window.__formFiller_clickElement = __formFiller_clickElement;
+  window.__formFiller_getFileName = __formFiller_getFileName;
 })();

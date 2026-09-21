@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/narration_lookup.dart';
+import '../../core/theme.dart';
 import '../../orchestration/application_flow_controller.dart';
 import '../../orchestration/application_flow_fsm.dart';
 import '../widgets/job_page_view.dart';
@@ -11,40 +12,43 @@ import '../widgets/voice_trigger_button.dart';
 import 'settings_screen.dart';
 import 'spike_harness_screen.dart';
 
-/// Trigger button + live status/narration readout — the entire visible
-/// surface of the app during a flow. See spec.md §5 (UI layer, purely
-/// presentational, driven by the FSM's current state).
+/// The app's single task surface. It mirrors the FSM and spoken narration in
+/// one predictable reading order, with settings as the sole top-level route.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key, this.showWebView = false});
 
-  /// Show the embedded job page below the controls. On only for a real
-  /// (non-mock) run, where the WebView must be in the tree for the flow to
-  /// load and read the page (milestone44).
+  /// A real run needs the embedded page in the widget tree for the WebView
+  /// controller to load and inspect it. Mock runs deliberately omit it.
   final bool showWebView;
 
   @override
   Widget build(BuildContext context) {
+    final language = context.select<ApplicationFlowController, String>(
+      (c) => c.language,
+    );
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: showWebView
-                ? MainAxisAlignment.start
-                : MainAxisAlignment.center,
-            children: [
-              // Mirrors the last spoken line; before anything has been said
-              // it falls back to the state's placeholder text.
-              Consumer2<ApplicationFlowFsm, ApplicationFlowController>(
-                builder: (context, fsm, controller, _) => StatusNarrationView(
-                  text: controller.lastNarration.isNotEmpty
-                      ? controller.lastNarration
-                      : narrationFor(fsm.state, language: controller.language),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          children: [
+            Row(
+              children: [
+                const ExcludeSemantics(
+                  child: Icon(Icons.record_voice_over_outlined, size: 28),
                 ),
-              ),
-              const SizedBox(height: 24),
-              const VoiceTriggerButton(),
-              const SizedBox(height: 24),
-              TextButton(
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Job Access Assist',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: TextButton.icon(
                 onPressed: () {
                   Navigator.of(context).push(
                     MaterialPageRoute<void>(
@@ -52,29 +56,77 @@ class HomeScreen extends StatelessWidget {
                     ),
                   );
                 },
-                child: const Text('Settings'),
+                icon: const Icon(Icons.tune_outlined),
+                label: Text(FlowNarration(language).settingsButton),
               ),
-              // Debug-only entry point to the milestone 01/02 spike
-              // harness — not part of the real app flow, gated behind
-              // kDebugMode so it never ships in a release build.
-              if (kDebugMode) ...[
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const SpikeHarnessScreen(),
-                      ),
-                    );
-                  },
-                  child: const Text('Debug: spike harness'),
-                ),
-              ],
-              if (showWebView) const Expanded(child: JobPageView()),
+            ),
+            const SizedBox(height: 28),
+            Consumer2<ApplicationFlowFsm, ApplicationFlowController>(
+              builder: (context, fsm, controller, _) {
+                final visual = _statusVisual(fsm.state);
+                return StatusNarrationView(
+                  text: controller.lastNarration.isNotEmpty
+                      ? controller.lastNarration
+                      : narrationFor(fsm.state, language: controller.language),
+                  icon: visual.icon,
+                  accentColor: visual.color,
+                );
+              },
+            ),
+            const SizedBox(height: 24),
+            const VoiceTriggerButton(),
+            if (kDebugMode) ...[
+              const SizedBox(height: 12),
+              TextButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const SpikeHarnessScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.science_outlined),
+                label: const Text('Debug: spike harness'),
+              ),
             ],
-          ),
+            if (showWebView) ...[
+              const SizedBox(height: 24),
+              Text('Job page', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              const SizedBox(height: 480, child: JobPageView()),
+            ],
+          ],
         ),
       ),
     );
   }
+}
+
+({IconData icon, Color color}) _statusVisual(ApplicationFlowState state) {
+  if (state is ListeningState) {
+    return (icon: Icons.hearing, color: AppTheme.listening);
+  }
+  if (state is ParsingIntentState ||
+      state is LoadingTargetState ||
+      state is ReadingContentState ||
+      state is RetryingState) {
+    return (icon: Icons.sync, color: AppTheme.processing);
+  }
+  if (state is DoneState) {
+    return (icon: Icons.check_circle_outline, color: AppTheme.listening);
+  }
+  if (state is ErrorState) {
+    return (icon: Icons.error_outline, color: AppTheme.statusError);
+  }
+  if (state is CaptchaPendingState) {
+    return (icon: Icons.pause_circle_outline, color: AppTheme.focusOutline);
+  }
+  if (state is FinalReviewState ||
+      state is EditingFieldState ||
+      state is AwaitingSubmitConfirmationState ||
+      state is AwaitingUserActionState ||
+      state is FillingFormState) {
+    return (icon: Icons.fact_check_outlined, color: AppTheme.processing);
+  }
+  return (icon: Icons.mic_none_outlined, color: AppTheme.textMuted);
 }

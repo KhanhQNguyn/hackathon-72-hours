@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:job_access_assist/core/narration_lookup.dart';
 import 'package:job_access_assist/orchestration/application_flow_fsm.dart';
 
 import '../mocks/test_doubles.dart';
@@ -27,7 +28,13 @@ void main() {
         'n-email': 'alex@example.com',
       });
       expect(h.web.fileChooserNodes, ['n-cv']);
-      expect(h.picker.calls, 0, reason: 'saved CV path is used, no picker');
+      // The saved CV cannot be given to a web form; the user re-picks it in
+      // the page's own chooser, which is announced first.
+      final spoken = h.tts.spoken;
+      final announced = spoken.indexOf(FlowNarration('en').cvChooserAnnouncement);
+      expect(announced, isNonNegative);
+      expect(spoken.indexOf(FlowNarration('en').cvChosen('cv.pdf')), greaterThan(announced));
+      expect(h.chooserWaits, 1);
       expect(h.controller.lastNarration, contains('submitted'));
     });
 
@@ -47,7 +54,6 @@ void main() {
     test('a new spoken value is read back and must be confirmed', () async {
       final h = FlowHarness(
         profile: null,
-        pickerPath: '/picked/cv.pdf',
         script: [
           'go', 'yes',
           'Sam Tran', 'yes', // name: no saved value -> ask, confirm
@@ -61,7 +67,7 @@ void main() {
       expect(h.fsm.state, isA<DoneState>());
       expect(h.web.filled['n-name'], 'Sam Tran');
       expect(h.web.filled['n-phone'], '0911');
-      expect(h.picker.calls, 1, reason: 'no saved CV -> native picker');
+      expect(h.web.fileChooserNodes, ['n-cv']);
     });
 
     test('rejecting a saved value asks for a replacement', () async {

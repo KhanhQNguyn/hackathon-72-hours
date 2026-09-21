@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show SocketException;
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 
@@ -17,8 +19,10 @@ import 'prompts/image_to_text_prompt.dart';
 import 'prompts/intent_parsing_prompt.dart';
 import 'prompts/pdf_structuring_prompt.dart';
 
-/// A failed OpenAI call (HTTP error, timeout, or a reply that isn't the
-/// JSON shape the prompt asked for).
+/// A failed OpenAI call: HTTP error, network failure, timeout, or a reply
+/// that isn't the JSON shape the prompt asked for. Every failure of this
+/// service surfaces as this type so callers can degrade to non-AI
+/// behaviour with a single `on OpenAiException`.
 class OpenAiException implements Exception {
   final String message;
   final int? statusCode;
@@ -27,6 +31,112 @@ class OpenAiException implements Exception {
 
   @override
   String toString() => 'OpenAiException: $message';
+}
+
+/// Extracts the JSON object from a model reply, tolerating the ways real
+/// models wrap it: a ```json fence, or prose before/after the object.
+/// Throws [FormatException] if no object can be found.
+@visibleForTesting
+Map<String, dynamic> parseModelJson(String content) {
+  var text = content.trim();
+
+  final fence = RegExp(
+    r'```(?:json)?\s*([\s\S]*?)```',
+    caseSensitive: false,
+  ).firstMatch(text);
+  if (fence != null) text = fence.group(1)!.trim();
+
+  Object? decoded;
+  try {
+    decoded = jsonDecode(text);
+  } on FormatException {
+    final object = _firstBalancedObject(text);
+    if (object == null) {
+      throw const FormatException('no JSON object in the reply');
+    }
+    decoded = jsonDecode(object);
+  }
+  if (decoded is! Map<String, dynamic>) {
+    throw const FormatException('reply is not a JSON object');
+  }
+  return decoded;
+}
+
+/// The first `{...}` in [text] with balanced braces, ignoring braces that
+/// sit inside JSON strings.
+String? _firstBalancedObject(String text) {
+  final start = text.indexOf('{');
+  if (start < 0) return null;
+  var depth = 0;
+  var inString = false;
+  var escaped = false;
+  for (var i = start; i < text.length; i++) {
+    final ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch == r'\') {
+        escaped = true;
+      } else if (ch == '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch == '"') {
+      inString = true;
+    } else if (ch == '{') {
+      depth++;
+    } else if (ch == '}') {
+      depth--;
+      if (depth == 0) return text.substring(start, i + 1);
+    }
+  }
+  return null;
+}
+
+/// Read access to a model's JSON object that is tolerant of key casing and
+/// separators (`intentType` / `intent_type` / `IntentType`) and of values
+/// with the wrong type, so a slightly-off reply degrades instead of
+/// throwing a `TypeError` far from the parse.
+class _Fields {
+  _Fields(Map<String, dynamic> json)
+    : _byNormalizedKey = {
+        for (final e in json.entries) _normalize(e.key): e.value,
+      };
+
+  final Map<String, Object?> _byNormalizedKey;
+
+  static String _normalize(String key) =>
+      key.toLowerCase().replaceAll(RegExp(r'[_\-\s]'), '');
+
+  Object? raw(String key) => _byNormalizedKey[_normalize(key)];
+
+  /// A trimmed string; numbers and booleans are stringified; anything else
+  /// (null, list, map) is `null`.
+  String? str(String key) {
+    final v = raw(key);
+    if (v is String) return v.trim();
+    if (v is num || v is bool) return v.toString();
+    return null;
+  }
+
+  /// A number in [0, 1]; a numeric string is accepted; otherwise 0.
+  double confidence(String key) {
+    final v = raw(key);
+    final n = v is num ? v.toDouble() : (v is String ? double.tryParse(v) : null);
+    return (n ?? 0.0).clamp(0.0, 1.0);
+  }
+
+  List<Object?> list(String key) {
+    final v = raw(key);
+    return v is List ? v : const [];
+  }
+
+  /// Objects in the list at [key], each wrapped for tolerant reads.
+  List<_Fields> objects(String key) => [
+    for (final item in list(key))
+      if (item is Map) _Fields(item.cast<String, dynamic>()),
+  ];
 }
 
 /// Wraps calls to the OpenAI API. See spec.md §1, §6 for the five call
@@ -40,6 +150,7 @@ class OpenAiService {
     http.Client? client,
     String? apiKey,
     this.retryDelay = const Duration(seconds: 1),
+    this.maxRetryAfter = const Duration(seconds: 10),
     this.timeout = const Duration(seconds: 30),
   }) : _client = client ?? http.Client(),
        _apiKeyOverride = apiKey;
@@ -52,11 +163,16 @@ class OpenAiService {
 
   final http.Client _client;
   final String? _apiKeyOverride;
+
+  /// Base backoff between retries of a 429/5xx (multiplied by the attempt).
   final Duration retryDelay;
+
+  /// Upper bound on how long a `Retry-After` header can make us wait.
+  final Duration maxRetryAfter;
   final Duration timeout;
 
-  // Read once per call site from dotenv (milestone03); `isInitialized`
-  // guards tests and any run where `main` never loaded the file.
+  // Read per call from dotenv (milestone03); `isInitialized` guards tests
+  // and any run where `main` never loaded the file.
   String get _apiKey =>
       _apiKeyOverride ??
       (dotenv.isInitialized ? dotenv.env['OPENAI_API_KEY'] ?? '' : '');
@@ -66,7 +182,7 @@ class OpenAiService {
   bool get isConfigured => _apiKey.trim().isNotEmpty;
 
   /// Trivial connectivity check (milestone03 Definition of Done).
-  Future<String> debugPing() async {
+  Future<String> debugPing() => _guard(() async {
     final json = await _chat(
       model: _textModel,
       messages: [
@@ -77,7 +193,7 @@ class OpenAiService {
     final choices = json['choices'] as List<dynamic>;
     return (choices.first as Map<String, dynamic>)['message']['content']
         as String;
-  }
+  });
 
   // --- (a) intent parsing — milestone36 -----------------------------------
 
@@ -89,8 +205,8 @@ class OpenAiService {
     required String transcript,
     List<String> alternatives = const [],
     required String languagePref,
-  }) async {
-    final json = await _completeJson(
+  }) => _guard(() async {
+    final f = await _completeJson(
       model: _textModel,
       system: intentParsingSystemPrompt,
       user: intentParsingUserMessage(
@@ -99,9 +215,9 @@ class OpenAiService {
         languagePref: languagePref,
       ),
     );
-    final type = json['intentType'];
-    final confidence = _confidence(json['confidence']);
-    if (type is! String ||
+    final type = f.str('intentType')?.toLowerCase();
+    final confidence = f.confidence('confidence');
+    if (type == null ||
         !IntentType.all.contains(type) ||
         confidence < AppConstants.intentConfidenceThreshold) {
       return IntentResult(
@@ -109,12 +225,13 @@ class OpenAiService {
         confidence: confidence,
       );
     }
+    final target = f.str('targetDescription');
     return IntentResult(
       intentType: type,
-      targetDescription: json['targetDescription'] as String?,
+      targetDescription: target == null || target.isEmpty ? null : target,
       confidence: confidence,
     );
-  }
+  });
 
   // --- (b) image-to-text — milestone37 ------------------------------------
 
@@ -123,8 +240,8 @@ class OpenAiService {
   Future<ImageTranscription> imageToText({
     required String imageBase64,
     String mimeType = 'image/png',
-  }) async {
-    final json = await _completeJson(
+  }) => _guard(() async {
+    final f = await _completeJson(
       model: _visionModel,
       system: imageToTextSystemPrompt,
       user: [
@@ -137,10 +254,10 @@ class OpenAiService {
       timeout: const Duration(seconds: 60),
     );
     return ImageTranscription(
-      text: ((json['transcribedText'] as String?) ?? '').trim(),
-      confidence: _confidence(json['confidence']),
+      text: f.str('transcribedText') ?? '',
+      confidence: f.confidence('confidence'),
     );
-  }
+  });
 
   // --- (c) DOM filtering / summarization — milestone38 --------------------
 
@@ -149,25 +266,30 @@ class OpenAiService {
   Future<ListingSummary> summarizeListing({
     required String pageText,
     required String url,
-  }) async {
-    final json = await _completeJson(
+  }) => _guard(() async {
+    final f = await _completeJson(
       model: _textModel,
       system: domSummarizationSystemPrompt,
       user: domSummarizationUserMessage(pageText: pageText, url: url),
     );
     return ListingSummary(
-      listing: JobListing.fromJson(json),
-      confidence: _confidence(json['confidence']),
+      listing: JobListing(
+        title: f.str('title') ?? '',
+        company: f.str('company') ?? '',
+        requirements: f.str('requirements') ?? '',
+        howToApply: f.str('howToApply') ?? '',
+      ),
+      confidence: f.confidence('confidence'),
     );
-  }
+  });
 
   // --- (d) PDF-text structuring — milestone40 -----------------------------
 
   Future<PdfStructure> structurePdf({
     required String rawPdfText,
     List<PdfFormField> detectedFormFields = const [],
-  }) async {
-    final json = await _completeJson(
+  }) => _guard(() async {
+    final f = await _completeJson(
       model: _textModel,
       system: pdfStructuringSystemPrompt,
       user: pdfStructuringUserMessage(
@@ -177,23 +299,21 @@ class OpenAiService {
     );
     return PdfStructure(
       sections: [
-        for (final s in (json['sections'] as List<dynamic>? ?? const []))
-          if (s is Map<String, dynamic>)
-            PdfSection(
-              heading: (s['heading'] as String?) ?? '',
-              body: (s['body'] as String?) ?? '',
-            ),
+        for (final s in f.objects('sections'))
+          PdfSection(
+            heading: s.str('heading') ?? '',
+            body: s.str('body') ?? '',
+          ),
       ],
       inferredFields: [
-        for (final f in (json['inferredFields'] as List<dynamic>? ?? const []))
-          if (f is Map<String, dynamic>)
-            InferredPdfField(
-              label: (f['label'] as String?) ?? '',
-              inferredType: (f['inferredType'] as String?) ?? 'unknown',
-            ),
+        for (final field in f.objects('inferredFields'))
+          InferredPdfField(
+            label: field.str('label') ?? '',
+            inferredType: field.str('inferredType') ?? 'unknown',
+          ),
       ],
     );
-  }
+  });
 
   // --- (e) element / field matching — milestone39 -------------------------
 
@@ -205,8 +325,8 @@ class OpenAiService {
   Future<ElementMatchResult> matchElement({
     required String targetDescription,
     required List<DomFormField> candidates,
-  }) async {
-    final json = await _completeJson(
+  }) => _guard(() async {
+    final f = await _completeJson(
       model: _textModel,
       system: elementMatchingSystemPrompt,
       user: elementMatchingUserMessage(
@@ -215,26 +335,41 @@ class OpenAiService {
       ),
     );
     final valid = {for (final c in candidates) c.elementId};
-    final rawId = json['elementId'];
-    final id = rawId is String && valid.contains(rawId) ? rawId : null;
+    final rawId = f.str('elementId');
+    final id = rawId != null && valid.contains(rawId) ? rawId : null;
     final alternatives = [
-      for (final a in (json['alternativeElementIds'] as List<dynamic>? ?? const []))
+      for (final a in f.list('alternativeElementIds'))
         if (a is String && valid.contains(a) && a != id) a,
     ];
     return ElementMatchResult(
       elementId: id,
-      // A pick the model made but that isn't a real candidate carries no
+      // A pick the model made that isn't a real candidate carries no
       // confidence.
-      confidence: id == null && rawId != null ? 0.0 : _confidence(json['confidence']),
-      reasoning: (json['reasoning'] as String?) ?? '',
+      confidence: id == null && rawId != null && rawId.isNotEmpty
+          ? 0.0
+          : f.confidence('confidence'),
+      reasoning: f.str('reasoning') ?? '',
       alternativeElementIds: alternatives,
     );
-  }
+  });
 
   // --- plumbing ------------------------------------------------------------
 
-  /// Runs a JSON-mode chat completion and returns the parsed object.
-  Future<Map<String, dynamic>> _completeJson({
+  /// Guarantees every failure leaving this service is an
+  /// [OpenAiException], whatever went wrong inside.
+  Future<T> _guard<T>(Future<T> Function() body) async {
+    try {
+      return await body();
+    } on OpenAiException {
+      rethrow;
+    } catch (e) {
+      throw OpenAiException('Unexpected failure: $e');
+    }
+  }
+
+  /// Runs a JSON-mode chat completion and returns tolerant field access to
+  /// the parsed object.
+  Future<_Fields> _completeJson({
     required String model,
     required String system,
     required Object user,
@@ -253,11 +388,7 @@ class OpenAiService {
       final content =
           (choices.first as Map<String, dynamic>)['message']['content']
               as String;
-      final decoded = jsonDecode(content);
-      if (decoded is! Map<String, dynamic>) {
-        throw const FormatException('reply is not a JSON object');
-      }
-      return decoded;
+      return _Fields(parseModelJson(content));
     } on Object catch (e) {
       throw OpenAiException('Unexpected reply shape: $e');
     }
@@ -281,6 +412,7 @@ class OpenAiService {
       if (jsonMode) 'response_format': {'type': 'json_object'},
     });
 
+    var timeoutRetried = false;
     for (var attempt = 0; ; attempt++) {
       final http.Response response;
       try {
@@ -295,22 +427,40 @@ class OpenAiService {
             )
             .timeout(timeout ?? this.timeout);
       } on TimeoutException {
+        // One retry: a slow first byte is common on a congested venue
+        // network, but don't stall a spoken flow for longer than that.
+        if (!timeoutRetried) {
+          timeoutRetried = true;
+          Logger.log('openai: timed out, retrying once');
+          continue;
+        }
         throw const OpenAiException('OpenAI request timed out');
+      } on SocketException catch (e) {
+        throw OpenAiException('No network connection: ${e.message}');
+      } on http.ClientException catch (e) {
+        throw OpenAiException('Network error: ${e.message}');
       }
 
       if (response.statusCode == 200) {
-        return jsonDecode(utf8.decode(response.bodyBytes))
-            as Map<String, dynamic>;
+        try {
+          return jsonDecode(utf8.decode(response.bodyBytes))
+              as Map<String, dynamic>;
+        } on Object catch (e) {
+          throw OpenAiException('Unreadable OpenAI response: $e');
+        }
       }
+
       // Simple backoff on rate limits / transient server errors, not a
       // queue (spec.md §3 "OpenAI rate limits").
       final retryable =
           response.statusCode == 429 || response.statusCode >= 500;
       if (retryable && attempt < _maxRetries) {
+        final wait = _retryWait(response, attempt);
         Logger.log(
-          'openai: ${response.statusCode}, retry ${attempt + 1}/$_maxRetries',
+          'openai: ${response.statusCode}, retry ${attempt + 1}/$_maxRetries '
+          'in ${wait.inMilliseconds}ms',
         );
-        await Future<void>.delayed(retryDelay * (attempt + 1));
+        await Future<void>.delayed(wait);
         continue;
       }
       throw OpenAiException(
@@ -320,6 +470,14 @@ class OpenAiService {
     }
   }
 
-  static double _confidence(Object? value) =>
-      value is num ? value.toDouble().clamp(0.0, 1.0) : 0.0;
+  /// `Retry-After` (seconds), capped at [maxRetryAfter], else linear
+  /// backoff.
+  Duration _retryWait(http.Response response, int attempt) {
+    final seconds = int.tryParse(response.headers['retry-after'] ?? '');
+    if (seconds != null && seconds >= 0) {
+      final asked = Duration(seconds: seconds);
+      return asked > maxRetryAfter ? maxRetryAfter : asked;
+    }
+    return retryDelay * (attempt + 1);
+  }
 }

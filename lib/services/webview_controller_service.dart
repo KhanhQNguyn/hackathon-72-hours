@@ -343,6 +343,19 @@ class WebViewControllerService {
     return json['success'] == true;
   }
 
+  /// The name of the file currently held by the `<input type="file">`
+  /// [nodeId], or `null` if none / the node is gone (audit 1.4b). Used to
+  /// confirm the user really attached something in the system chooser.
+  Future<String?> getFileInputName(String nodeId) async {
+    final json = await _evalJson(
+      'window.__formFiller_getFileName(${jsonEncode(nodeId)})',
+    ) as Map<String, dynamic>;
+    final name = json['name'];
+    return json['success'] == true && name is String && name.isNotEmpty
+        ? name
+        : null;
+  }
+
   /// Clicks [nodeId] (milestone44) — used only for the final submit
   /// button, from the FSM's gated submit action. Returns `false` if the
   /// node is gone.
