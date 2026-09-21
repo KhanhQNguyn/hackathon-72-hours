@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html><body>
+<p>Some page content</p>
+<div class="my-captcha-wrapper" style="width:100px;height:50px;">no real widget inside</div>
+<script src="../../assets/js/dom_reader.js"></script>
+<script>
+  var result = JSON.parse(window.__domReader_detectCaptcha());
+  var pass = result.detected === true;
+  console.log('M13_CLASS_RESULT:' + JSON.stringify(result));
+  console.log('M13_CLASS_PASS:' + pass);
+</script>
+</body></html>

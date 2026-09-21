@@ -6,8 +6,7 @@ import 'language.dart';
 /// PLACEHOLDER WORDING — the final EN + VI narration script is
 /// milestone 42's job; this file is only the plumbing. Deliberately an
 /// `is`-chain with a fallback rather than an exhaustive `switch`, so
-/// states added by other workstreams (e.g. a CAPTCHA-pending state) don't
-/// break compilation — add a branch for each when merging.
+/// states added later don't break compilation.
 String narrationFor(ApplicationFlowState state) {
   if (state is IdleState) return 'Press the button and say a command.';
   if (state is ListeningState) return 'Listening for your command...';
@@ -26,6 +25,9 @@ String narrationFor(ApplicationFlowState state) {
     return 'Say confirm to submit your application.';
   }
   if (state is DoneState) return 'Application submitted.';
+  if (state is CaptchaPendingState) {
+    return 'A CAPTCHA needs you. Solve it, then say continue.';
+  }
   if (state is RetryingState) return 'That did not work, retrying...';
   if (state is ErrorState) return 'Something went wrong: ${state.message}';
   return 'Working...';

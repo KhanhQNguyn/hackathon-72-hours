@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html><body>
+<input id="a" data-app-node-id="n1" type="text">
+<script src="../../assets/js/form_filler.js"></script>
+<script>
+  // Success case: set then verify with the same expected value.
+  window.__formFiller_setValue('n1', 'Nguyễn Văn A');
+  var okResult = JSON.parse(window.__formFiller_verifyValue('n1', 'Nguyễn Văn A'));
+  var okPass = okResult.success === true;
+  console.log('M16_VERIFY_OK_RESULT:' + JSON.stringify(okResult));
+  console.log('M16_VERIFY_OK_PASS:' + okPass);
+
+  // Mismatch case: verify against a DIFFERENT expected value than what
+  // was actually set — must report value_did_not_stick.
+  var mismatchResult = JSON.parse(window.__formFiller_verifyValue('n1', 'something else entirely'));
+  var mismatchPass = mismatchResult.success === false && mismatchResult.reason === 'value_did_not_stick';
+  console.log('M16_VERIFY_MISMATCH_RESULT:' + JSON.stringify(mismatchResult));
+  console.log('M16_VERIFY_MISMATCH_PASS:' + mismatchPass);
+
+  // Stale-node case: verify against a nodeId that was never tagged.
+  var staleResult = JSON.parse(window.__formFiller_verifyValue('does-not-exist', 'x'));
+  var stalePass = staleResult.success === false && staleResult.reason === 'node_stale';
+  console.log('M16_VERIFY_STALE_RESULT:' + JSON.stringify(staleResult));
+  console.log('M16_VERIFY_STALE_PASS:' + stalePass);
+</script>
+</body></html>

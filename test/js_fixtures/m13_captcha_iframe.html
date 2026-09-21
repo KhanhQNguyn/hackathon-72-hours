@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html><body>
+<p>Some page content</p>
+<iframe src="https://www.google.com/recaptcha/api2/anchor?fake=1" style="width:300px;height:78px;border:0;"></iframe>
+<script src="../../assets/js/dom_reader.js"></script>
+<script>
+  var result = JSON.parse(window.__domReader_detectCaptcha());
+  var pass = result.detected === true && result.provider === 'recaptcha';
+  console.log('M13_IFRAME_RESULT:' + JSON.stringify(result));
+  console.log('M13_IFRAME_PASS:' + pass);
+</script>
+</body></html>

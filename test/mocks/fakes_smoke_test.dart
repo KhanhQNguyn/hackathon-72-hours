@@ -10,7 +10,7 @@ void main() {
     expect(snapshot.labeledFields, hasLength(4));
     expect(snapshot.searchCandidates, hasLength(1));
     expect(snapshot.submitCandidates, hasLength(1));
-    expect(await web.fillField('n-name', 'A'), isTrue);
+    expect((await web.fillField('n-name', 'A')).success, isTrue);
 
     final pdf = FakePdfReaderService();
     expect(await pdf.extractTextWithOcrFallback('x.pdf'), isNotEmpty);

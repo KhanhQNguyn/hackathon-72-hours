@@ -277,6 +277,104 @@
   }
 
   // ---------------------------------------------------------------------
+  // Shared: visibility check (milestone13+)
+  // ---------------------------------------------------------------------
+  function __domReader_isVisible(el) {
+    if (!el) return false;
+    if (el.offsetParent === null) return false;
+    var style = window.getComputedStyle(el);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  }
+
+  // ---------------------------------------------------------------------
+  // milestone13 — CAPTCHA detection heuristic
+  // ---------------------------------------------------------------------
+  function __domReader_detectCaptcha() {
+    // 1. iframe[src*="recaptcha"|"hcaptcha"], present and visible.
+    var iframes = Array.prototype.slice.call(document.querySelectorAll('iframe'));
+    for (var i = 0; i < iframes.length; i++) {
+      var src = (iframes[i].getAttribute('src') || '').toLowerCase();
+      if (!__domReader_isVisible(iframes[i])) continue;
+      if (src.indexOf('recaptcha') !== -1) {
+        return JSON.stringify({ detected: true, provider: 'recaptcha' });
+      }
+      if (src.indexOf('hcaptcha') !== -1) {
+        return JSON.stringify({ detected: true, provider: 'hcaptcha' });
+      }
+    }
+
+    // 2. Any visible element whose class or id contains "captcha"
+    //    (case-insensitive) — deliberately permissive, see milestone13's
+    //    asymmetric-cost design note.
+    var all = document.querySelectorAll('[class], [id]');
+    for (var j = 0; j < all.length; j++) {
+      var el = all[j];
+      var cls = (el.getAttribute('class') || '').toLowerCase();
+      var id = (el.getAttribute('id') || '').toLowerCase();
+      if ((cls.indexOf('captcha') !== -1 || id.indexOf('captcha') !== -1) && __domReader_isVisible(el)) {
+        return JSON.stringify({ detected: true, provider: 'unknown' });
+      }
+    }
+
+    return JSON.stringify({ detected: false, provider: null });
+  }
+
+  // ---------------------------------------------------------------------
+  // milestone14 — CAPTCHA accessible audio-challenge button
+  // ---------------------------------------------------------------------
+  // Searches for a clickable element whose aria-label/title contains
+  // "audio" — the standard reCAPTCHA/hCaptcha accessible-audio-challenge
+  // affordance. Real-world limitation, stated plainly rather than hidden:
+  // reCAPTCHA/hCaptcha widgets are almost always rendered inside a
+  // CROSS-ORIGIN <iframe>, and same-origin policy means this top-level
+  // page script cannot read that iframe's contentDocument at all — the
+  // `try/catch` below exists specifically for that expected failure, not
+  // as defensive paranoia. This search only succeeds for same-origin
+  // audio-toggle elements (rare for real third-party CAPTCHA widgets);
+  // for the common cross-origin case, this correctly (not buggily)
+  // returns "not found", and checkpoint 3 falls through to the
+  // narrate-and-hand-off path, which is the accessible outcome either
+  // way (01-intent.md §4).
+  function __domReader_findAndClickAudioChallengeButton() {
+    function isAudioButton(el) {
+      var ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+      var title = (el.getAttribute('title') || '').toLowerCase();
+      return ariaLabel.indexOf('audio') !== -1 || title.indexOf('audio') !== -1;
+    }
+
+    // Same-origin candidates anywhere on the top-level page.
+    var candidates = document.querySelectorAll('[aria-label], [title]');
+    for (var i = 0; i < candidates.length; i++) {
+      if (isAudioButton(candidates[i]) && __domReader_isVisible(candidates[i])) {
+        candidates[i].click();
+        return JSON.stringify({ clicked: true });
+      }
+    }
+
+    // Best-effort same-origin iframe peek — throws/no-ops for the
+    // expected cross-origin case, per the function-level note above.
+    var iframes = document.querySelectorAll('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i]');
+    for (var j = 0; j < iframes.length; j++) {
+      try {
+        var innerDoc = iframes[j].contentDocument;
+        if (!innerDoc) continue;
+        var innerCandidates = innerDoc.querySelectorAll('[aria-label], [title]');
+        for (var k = 0; k < innerCandidates.length; k++) {
+          if (isAudioButton(innerCandidates[k])) {
+            innerCandidates[k].click();
+            return JSON.stringify({ clicked: true });
+          }
+        }
+      } catch (e) {
+        // Cross-origin — expected, not an error condition.
+        continue;
+      }
+    }
+
+    return JSON.stringify({ clicked: false });
+  }
+
+  // ---------------------------------------------------------------------
   // milestone12 — visible text extraction
   // ---------------------------------------------------------------------
   var __domReaderMaxTextLength = 8000;
@@ -326,4 +424,6 @@
   window.__domReader_getSubmitCandidates = __domReader_getSubmitCandidates;
   window.__domReader_getLabeledFields = __domReader_getLabeledFields;
   window.__domReader_getVisibleText = __domReader_getVisibleText;
+  window.__domReader_detectCaptcha = __domReader_detectCaptcha;
+  window.__domReader_findAndClickAudioChallengeButton = __domReader_findAndClickAudioChallengeButton;
 })();

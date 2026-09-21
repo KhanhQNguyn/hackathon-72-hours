@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html><body>
+<input id="cv" data-app-node-id="n1" type="file">
+<input id="notfile" data-app-node-id="n2" type="text">
+<script src="../../assets/js/form_filler.js"></script>
+<script>
+  var clickCount = 0;
+  document.getElementById('cv').addEventListener('click', function () {
+    clickCount++;
+  });
+
+  var okResult = JSON.parse(window.__formFiller_clickFileInput('n1'));
+  var okPass = okResult.success === true && clickCount === 1;
+  console.log('M21_CLICK_OK_RESULT:' + JSON.stringify(okResult));
+  console.log('M21_CLICK_OK_PASS:' + okPass);
+
+  var wrongTypeResult = JSON.parse(window.__formFiller_clickFileInput('n2'));
+  var wrongTypePass =
+    wrongTypeResult.success === false && wrongTypeResult.reason === 'not_a_file_input';
+  console.log('M21_CLICK_WRONGTYPE_RESULT:' + JSON.stringify(wrongTypeResult));
+  console.log('M21_CLICK_WRONGTYPE_PASS:' + wrongTypePass);
+
+  var staleResult = JSON.parse(window.__formFiller_clickFileInput('does-not-exist'));
+  var stalePass = staleResult.success === false && staleResult.reason === 'node_stale';
+  console.log('M21_CLICK_STALE_RESULT:' + JSON.stringify(staleResult));
+  console.log('M21_CLICK_STALE_PASS:' + stalePass);
+</script>
+</body></html>

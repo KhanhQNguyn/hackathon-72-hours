@@ -1,3 +1,4 @@
+import 'package:job_access_assist/models/pdf_form_field.dart';
 import 'package:job_access_assist/services/pdf_reader_service.dart';
 
 /// Canned-content stand-in for `PdfReaderService` (milestone34).
@@ -14,13 +15,15 @@ class FakePdfReaderService implements PdfReaderService {
       'Section 3 - Declaration: I confirm the information above is '
       'accurate.';
 
-  // MERGE: milestone20 adds this to the real `PdfReaderService` as the
-  // single entry point callers use. Once it exists, add `@override` here.
+  @override
   Future<String> extractTextWithOcrFallback(String pdfPath) async =>
       cannedFormText;
 
   @override
   Future<String> extractText(String pdfPath) async => cannedFormText;
+
+  @override
+  Future<List<PdfFormField>> extractFormFields(String pdfPath) async => const [];
 
   @override
   Future<bool> hasTextLayer(String pdfPath) async => true;

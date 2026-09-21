@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:job_access_assist/models/captcha_check_result.dart';
 import 'package:job_access_assist/models/dom_snapshot.dart';
+import 'package:job_access_assist/models/fill_field_result.dart';
 import 'package:job_access_assist/services/webview_controller_service.dart';
 
 /// Canned-content stand-in for `WebViewControllerService` so the FSM/UI
@@ -21,9 +23,6 @@ class FakeWebViewControllerService implements WebViewControllerService {
   Future<List<UserScript>> loadInitialUserScripts() async => const [];
 
   @override
-  List<WebMessageListener> get webMessageListeners => const [];
-
-  @override
   void notifyLoadStop() => _domChanged.add(null);
 
   @override
@@ -35,14 +34,24 @@ class FakeWebViewControllerService implements WebViewControllerService {
   @override
   Future<DomSnapshot> readDom() async => cannedSnapshot;
 
-  // MERGE: milestone16 changes the real signature to
-  // `Future<FillFieldResult> fillField(String nodeId, String value)`.
-  // Change the return type here and return `FillFieldResult(success: true)`.
   @override
-  Future<bool> fillField(String fieldId, String value) async {
+  void notifyLoadError(String description) {}
+
+  @override
+  Future<CaptchaCheckResult> detectCaptcha() async =>
+      const CaptchaCheckResult(detected: false);
+
+  @override
+  Future<bool> tryResolveCaptchaViaAudio() async => false;
+
+  @override
+  Future<FillFieldResult> fillField(String nodeId, String value) async {
     await Future<void>.delayed(const Duration(milliseconds: 300));
-    return true;
+    return const FillFieldResult(success: true);
   }
+
+  @override
+  Future<bool> triggerFileChooser(String nodeId) async => true;
 
   @override
   Future<void> focusElement(String nodeRef) async {}

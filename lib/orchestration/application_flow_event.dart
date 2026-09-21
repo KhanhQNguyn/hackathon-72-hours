@@ -33,7 +33,12 @@ class ContentRead extends ApplicationFlowEvent {
 class ListingConfirmed extends ApplicationFlowEvent {
   final List<String> fieldIds;
 
-  const ListingConfirmed(this.fieldIds);
+  /// fieldId -> detected type (e.g. `'file'`), passed through to
+  /// `FillingFormState.fieldTypes` (milestone21). Optional/named so
+  /// existing single-positional-argument call sites keep compiling.
+  final Map<String, String> fieldTypes;
+
+  const ListingConfirmed(this.fieldIds, {this.fieldTypes = const {}});
 }
 
 /// Fired once per field in the field-by-field confirm loop (spec.md
@@ -91,4 +96,17 @@ class ErrorOccurred extends ApplicationFlowEvent {
 
 class RetryRequested extends ApplicationFlowEvent {
   const RetryRequested();
+}
+
+/// Fired when the heuristic pre-filter (milestones 10/11) finds zero
+/// candidates for a field the flow needs to fill — a distinct case from
+/// a low-confidence match (milestone39, out of this range). Advances the
+/// per-field loop exactly like `FieldConfirmed`, but callers narrate a
+/// different message ("this form doesn't seem to have a field for X —
+/// skipping it") and never enter `ErrorState`, since retrying can't
+/// produce a field that isn't there (milestone24).
+class FieldSkippedNotFound extends ApplicationFlowEvent {
+  final String fieldId;
+
+  const FieldSkippedNotFound(this.fieldId);
 }
