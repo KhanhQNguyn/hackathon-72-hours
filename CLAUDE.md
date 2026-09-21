@@ -4,9 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-This is a **planning-artifact chain** for an ADC Hackathon 2026 entry targeting **Stage 2 — Job Search & Application** (Technological Solutions category): a voice-driven Flutter app that helps blind/low-vision job seekers get past four accessibility barriers — job descriptions posted as images, inaccessible job portals/company websites, unreadable PDF application forms, and filling in/submitting the application itself. (The repo previously targeted a different assignment — a Shopee voice-ordering app — before the official Competition Brief was released; that framing is superseded throughout `intent/`, though `01-intent.md` preserves the old text in strikethrough as a decision trail.) There is **no application code in this repo yet** — only the sequential chain of Markdown documents that fully specify what is to be built. `05-scaffolder.md` contains instructions *for* Claude Code to scaffold a Flutter project, but that scaffolding has not been executed in this repo — check before assuming `lib/`, `android/`, `pubspec.yaml`, etc. exist.
+An ADC Hackathon 2026 entry targeting **Stage 2 — Job Search & Application** (Technological Solutions category): a voice-driven Flutter app that helps blind/low-vision job seekers get past four accessibility barriers — job descriptions posted as images, inaccessible job portals/company websites, unreadable PDF application forms, and filling in/submitting the application itself. (The repo previously targeted a different assignment — a Shopee voice-ordering app — before the official Competition Brief was released; that framing is superseded throughout `docs/intent/`, though `01-intent.md` preserves the old text in strikethrough as a decision trail.)
 
-Because of this, there are no build/lint/test commands to run here. If asked to run the project, first check whether `05-scaffolder.md` has actually been executed (look for `pubspec.yaml`); if not, that's the first step, not `flutter run`.
+The repo is both a **planning-artifact chain** (Markdown under `docs/`) **and an in-progress Flutter app** (`lib/`, `assets/js/`, `test/`, Flutter package name `job_access_assist`). Work is tracked as 47 milestones in `docs/intent/milestones/` (`00-index.md` is the dependency map; each `milestoneNN-*.md` is self-contained). Check the index and `git log` to see which are done — as of now roughly milestones 1–12 (spikes, secrets, FSM, DOM reader JS) are implemented; services such as `openai_service.dart`, `pdf_reader_service.dart`, `speech_service.dart` etc. exist as files but may still be stubs. **Read the milestone file before implementing or changing a piece** — it has preconditions, Definition of Done, and flagged open decisions.
+
+## Commands
+
+Android-first; a Flutter SDK (Dart `^3.11.1`) is required.
+
+- `flutter pub get` — install deps
+- `flutter run` — run on an Android device/emulator (needs a real device for STT/TalkBack/WebView work)
+- `flutter analyze` — lint (`flutter_lints`, see `analysis_options.yaml`)
+- `flutter test` — all tests; single file: `flutter test test/orchestration/application_flow_fsm_test.dart`; single case: add `--plain-name "<test name substring>"`
+- Setup: copy `.env.example` to `.env` and set `OPENAI_API_KEY`. `main.dart` calls `dotenv.load('.env')`, and `.env` must be listed as a Flutter asset in `pubspec.yaml` to load. `.env` is gitignored — never commit it.
+- `test/js_fixtures/*.html` are fixtures for the injected JS (`assets/js/dom_reader.js`, `form_filler.js`); they are loaded into a real WebView (e.g. via `SpikeHarnessScreen`), not run by `flutter test`.
+
+## Code architecture (big picture)
+
+Layered + FSM, wired with `provider` (`app.dart` creates one `ChangeNotifierProvider<ApplicationFlowFsm>`); UI screens read the FSM as their "ViewModel".
+
+- `lib/orchestration/` — `ApplicationFlowFsm` (a `ChangeNotifier`) is the single source of truth for flow position. States and events are sealed-style classes in `application_flow_state.dart` / `application_flow_event.dart`; `transition(event)` is one big `switch` and **invalid transitions are logged no-ops, not exceptions**. The real submit action is injected as `performRealSubmit` and invoked only from the `SubmitConfirmed` case — submit is gated on FSM state, never on AI text. `ErrorState(failedState, message)` wraps a failed state so retry returns to it.
+- `lib/services/` — one class per external capability (OpenAI, STT, TTS, WebView/JS bridge, PDF, OCR, file picker, applicant profile, prefs, fuzzy match). The FSM depends on these via injected callbacks/services so it stays unit-testable with `mockito` (mocks planned in milestone 34).
+- `assets/js/` — `dom_reader.js` (perceive: enumerate images/alt text, search-field and submit-button heuristics, text extraction, `MutationObserver`) and `form_filler.js` (act: locate, set value, dispatch events). Both are injected by `WebViewControllerService` as `UserScript`s at `AT_DOCUMENT_START` and talk back through a `WebMessageListener` registered under the JS object name `jobAccessAssistBridge` — the name in Dart and JS **must match exactly**. The listener currently allows origin `*`; restricting it is milestone 17.
+- `lib/ui/screens/` — `home_screen`, `settings_screen`, and `spike_harness_screen` (throwaway debug screen for milestones 1–2, meant to be deleted or kept debug-only behind `kDebugMode`).
+- Local state is a three-way split: `SharedPreferences` (settings), `sqflite` (structured applicant profile), `flutter_secure_storage` (sensitive PII fields).
+- `permission_handler_android` is pinned to 13.0.1 via `dependency_overrides` because 14.x breaks the Android build — don't bump it without checking `pubspec.yaml`'s comment.
 
 ## The artifact chain
 
@@ -28,13 +50,13 @@ docs/
 references/                     ← screenshots of reference UI pages (for 07/08)
 ```
 
-**Note on layout:** the artifact chain was moved from top-level `intent/`/`theme/` into `docs/intent/`/`docs/theme/` partway through the project (git still shows the old top-level files as deleted, uncommitted, alongside the new untracked `docs/` — that's an in-progress reorganization, not something to "fix" by reverting). Always check `docs/intent/` first; if it's missing, fall back to checking top-level `intent/`.
+**Note on layout:** the artifact chain lives in `docs/intent/` and `docs/theme/` (it was originally top-level `intent/`/`theme/`; that move is now committed).
 
 **`03-schema.md` and `04-endpoints.md` were deliberately skipped** (documented as a decision in `02-spec.md` §8): the product has no backend and no database, so there's nothing to model. Local state is documented directly in `02-spec.md` §8 instead of a separate schema file — as of the latest incremental update, it's a three-way split (`SharedPreferences` for simple settings, `sqflite` for the structured applicant profile, `flutter_secure_storage` for sensitive PII fields within it), not a single `SharedPreferences` store.
 
 ### Run order (not numeric file order)
 
-`05-scaffolder.md` (code skeleton) is meant to run *before* `06-plan.md` (detailed execution plan), because the plan needs to know how the code is already organized to split work accurately: `01 → 02 → 05 → 06 → 07 → 08 → 09 (parallel, from 07 onward) → 10 (applied throughout, starting at 02, not just at the end)`.
+`05-scaffolder.md` (code skeleton — now executed) was meant to run *before* `06-plan.md` (detailed execution plan), because the plan needs to know how the code is already organized to split work accurately: `01 → 02 → 05 → 06 → 07 → 08 → 09 (parallel, from 07 onward) → 10 (applied throughout, starting at 02, not just at the end)`.
 
 ### The governing principle
 

@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 /// status changes even if TTS narration fails or is muted. See spec.md
 /// §7 (WCAG 3.3.1 Error Identification) and the accessibility-wcag.md
 /// live-region cross-check.
+///
+/// Text is supplied by the caller (`home_screen.dart` binds it to the FSM
+/// state via `narrationFor`).
 class StatusNarrationView extends StatelessWidget {
   final String text;
 
@@ -12,11 +15,9 @@ class StatusNarrationView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // TODO: keep this in sync with every TtsService.speak() call, not
-    // just checkpoint narration (plan.md Workstream B2)
     return Semantics(
       liveRegion: true,
-      child: Text(text),
+      child: Text(text, textAlign: TextAlign.center),
     );
   }
 }
