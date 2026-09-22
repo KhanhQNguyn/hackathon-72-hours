@@ -85,9 +85,9 @@ class AppTheme {
         labelStyle: const TextStyle(color: textSecondary),
         hintStyle: const TextStyle(color: textMuted),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        enabledBorder: inputBorder.copyWith(side: const BorderSide(color: outlineVariant, width: 1.5)),
-        focusedBorder: inputBorder.copyWith(side: const BorderSide(color: focusOutline, width: 3)),
-        errorBorder: inputBorder.copyWith(side: const BorderSide(color: statusError, width: 2)),
+        enabledBorder: inputBorder.copyWith(borderSide: const BorderSide(color: outlineVariant, width: 1.5)),
+        focusedBorder: inputBorder.copyWith(borderSide: const BorderSide(color: focusOutline, width: 3)),
+        errorBorder: inputBorder.copyWith(borderSide: const BorderSide(color: statusError, width: 2)),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(

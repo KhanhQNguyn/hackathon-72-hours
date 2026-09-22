@@ -104,7 +104,10 @@ class HomeScreen extends StatelessWidget {
 
 ({IconData icon, Color color}) _statusVisual(ApplicationFlowState state) {
   if (state is ListeningState) {
-    return (icon: Icons.hearing, color: AppTheme.listening);
+    // A different icon than the trigger button's own `Icons.hearing` —
+    // this status card is a separate widget describing the same state,
+    // not the button itself.
+    return (icon: Icons.graphic_eq, color: AppTheme.listening);
   }
   if (state is ParsingIntentState ||
       state is LoadingTargetState ||

@@ -68,24 +68,32 @@ class VoiceTriggerButton extends StatelessWidget {
       enabled: enabled,
       label: label,
       excludeSemantics: true,
-      child: SizedBox(
-        width: double.infinity,
-        height: 72,
-        child: FilledButton.icon(
-          style: FilledButton.styleFrom(
-            backgroundColor: background,
-            foregroundColor: foreground,
-            disabledBackgroundColor: background,
-            disabledForegroundColor: foreground,
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.all(Radius.circular(24)),
+      // A min-height constraint, not a fixed SizedBox height: at 200%
+      // Android font scaling the label can wrap to two lines, and a fixed
+      // height would clip it instead of letting the button grow
+      // (spec.md §7, WCAG 1.4.4 Resize Text). At normal scale the content
+      // is shorter than 72dp, so this still renders at exactly 72dp.
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 72),
+        child: SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: background,
+              foregroundColor: foreground,
+              disabledBackgroundColor: background,
+              disabledForegroundColor: foreground,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(24)),
+              ),
             ),
+            onPressed: enabled
+                ? () => context.read<ApplicationFlowController>().start()
+                : null,
+            icon: Icon(icon, size: 28),
+            label: Text(label),
           ),
-          onPressed: enabled
-              ? () => context.read<ApplicationFlowController>().start()
-              : null,
-          icon: Icon(icon, size: 28),
-          label: Text(label),
         ),
       ),
     );
