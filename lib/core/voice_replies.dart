@@ -69,3 +69,42 @@ int sharedWordCount(String a, String b) {
   final wa = _words(a).toSet();
   return _words(b).where(wa.contains).length;
 }
+
+/// Canned "what the user says" half of the standalone scripted scenario
+/// demo (debug-only, see `lib/mocks/scripted_demo_flow.dart`) — recited
+/// verbatim in the on-screen/log transcript alongside each narrated line,
+/// never parsed or acted on. `narration_lookup.dart`'s new `demo*`
+/// getters are the "what the AI says" half of the same script.
+const List<String> scenarioDemoUserReplies = [
+  'Software Engineer on VietNamWorks website.',
+  'Yes', // confirm listing
+  'I want Embedded Software Engineer role',
+  'Yes', // confirm apply
+  'No', // decline the upsell
+  'Yes', // First name
+  'Yes', // Last name
+  'Yes', // Job title
+  'Yes', // Current job level
+  'Yes', // Years of experience
+  'Yes', // Highest Education
+  'Yes', // Current job function
+  'Yes', // Current industry
+  'No', // decline to fill in the missing Current salary field
+  'Yes', // Cell number
+  'Yes', // Date of birth
+  'Yes', // Nationality
+  'Yes', // Gender
+  'Yes', // Marital Status
+  'Yes', // Country
+  'Yes', // Address
+  'Yes', // Expect location
+  'Skip', // expected benefits (optional)
+  '10000', // expected salary (compulsory)
+  'Yes', // Expected job level
+  'Yes', // show expected salary to employer toggle
+  'Yes', // Expected job function
+  'Yes', // Expected Industry
+  'Yes', // agree to the privacy policy
+  'I want to change Job title to Embedded Engineer', // edit request after box ticked
+  'Confirm', // final submit
+];

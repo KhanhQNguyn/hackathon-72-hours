@@ -24,8 +24,7 @@ void main() {
           ],
         script: [
           'I want to find software engineer job on VietnamWorks',
-          'I choose Automation and Smart Manufacturing Software Engineer '
-              'in Wistron NeWeb Corporation (WNC) in Hà Nam',
+          'I want the Embedded Software Engineer role at Hella Vietnam',
           'yes', // confirm apply
           'yes', // name: use saved value
           'yes', // phone: use saved value
@@ -45,9 +44,9 @@ void main() {
       expect(harness.web.filled['n-search'], 'software engineer');
       expect(harness.web.clicked, contains('n-search-submit'));
 
-      // Matched the second (Wistron NeWeb) card, not the first.
-      expect(harness.web.clicked, contains('n-card-1'));
-      expect(harness.web.clicked, isNot(contains('n-card-0')));
+      // Matched the first (Embedded Software Engineer / Hella) card.
+      expect(harness.web.clicked, contains('n-card-0'));
+      expect(harness.web.clicked, isNot(contains('n-card-1')));
 
       // Clicked "apply" then the real submit button.
       expect(harness.web.clicked, contains('n-submit'));
@@ -96,7 +95,7 @@ void main() {
           ],
         script: [
           'I want to find software engineer job on VietnamWorks',
-          'I choose Wistron NeWeb Corporation software engineer Hà Nam',
+          'I want the Embedded Software Engineer role at Hella Vietnam',
           'yes',
           'yes',
           'yes',

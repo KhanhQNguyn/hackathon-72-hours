@@ -32,6 +32,13 @@ import 'ui/screens/unsupported_platform_screen.dart';
 /// real. With it off (milestone 44) the real WebView and PDF services are
 /// used and the page is shown on the home screen. Providers are lazy, so
 /// nothing touches a platform plugin until a screen reads it.
+///
+/// [AppConfig.debugScenarioDemo]'s standalone scripted-play demo
+/// (`lib/mocks/scripted_demo_flow.dart`) needs no wiring here — its
+/// trigger button (`HomeScreen`'s `_ScenarioDemoButton`) reads
+/// [TtsService]/[PreferencesService] straight from this same provider
+/// tree and bypasses [ApplicationFlowController]/the FSM entirely, by
+/// design (a pre-written play script, not a real-time simulation).
 class App extends StatelessWidget {
   const App({
     super.key,

@@ -81,13 +81,13 @@ class FlowNarration {
   // --- state prompts --------------------------------------------------
 
   String get idlePrompt => _s(
-    "Press the button and say something like 'read this listing' or 'apply to this job'.",
-    "Nhấn nút và nói ví dụ 'đọc tin tuyển dụng này' hoặc 'nộp đơn vào công việc này'.",
+    "Press the button and say which job do you want to search for ?",
+    "Hãy nhấn nút và nói công việc bạn muốn tìm kiếm.",
   );
 
   String get commandPrompt => _s(
-    "Listening. Say something like 'read this listing' or 'apply to this job'.",
-    "Đang nghe. Hãy nói ví dụ 'đọc tin tuyển dụng này' hoặc 'nộp đơn vào công việc này'.",
+    "Listening. What job would you like to search for ?",
+    "Đang nghe. Bạn muốn tìm công việc nào?",
   );
 
   String get parsingIntent =>
@@ -446,5 +446,129 @@ class FlowNarration {
   String get submitUnconfirmed => _s(
     "I clicked submit, but I couldn't confirm your application actually went through. Please check the page.",
     'Tôi đã nhấn nộp đơn, nhưng không xác nhận được đơn đã được gửi thành công. Hãy kiểm tra lại trang.',
+  );
+
+  // --- standalone scripted scenario demo (debug-only) ---------------------
+  //
+  // A literal, pre-written "play script" for `lib/mocks/scripted_demo_flow.dart`
+  // — recited verbatim, not derived from any real DOM/AI logic. Lines that
+  // already exist verbatim elsewhere in this class (commandPrompt,
+  // parsingIntent, resultsFound, confirmListing, whichResult, loadingPage,
+  // readingPage, working, confirmApply, readingForm, submitting, done) are
+  // reused as-is by the demo script rather than duplicated here.
+
+  String demoSearching(String query) =>
+      _s('Searching VietnamWorks for $query', 'Đang tìm $query trên VietnamWorks');
+
+  String get demoPdfFound => _s(
+    'I found a PDF description format, let me download and analyze it.',
+    'Tôi thấy mô tả công việc ở định dạng PDF, để tôi tải xuống và phân tích.',
+  );
+
+  String get demoJobDescriptionIntro =>
+      _s('Here is the job description', 'Đây là mô tả công việc');
+
+  /// The full Embedded Software Engineer PDF-style description, spoken
+  /// verbatim as one utterance — left in English in both language modes
+  /// since it's quoted third-party job-posting content, not app UI text.
+  String get demoJobDescriptionText =>
+      'Your Tasks. '
+      'In the business division Electronics, you will be working with the software development team for electronics control units. '
+      'Design, develop and test product-specific software of automotive electronics module and system over the entire product development cycle. '
+      'Work on SW-architecture, write, test and debug code according to software requirement specification and the defined process. '
+      'Discuss with customer about specific solution for electronics modules and system, including function implementation and system interface. '
+      'Complete software module test report and integration test report according to test result. '
+      'Primarily responsible of software modules of HELLA products. '
+      'Other job assigned by Department Manager. '
+      'Job requirements. How well do you fit this job and rank among other candidates? '
+      'Minimum bachelor degree in computer science, engineering, or related field. '
+      '2 to 5 years experience in Embedded System. '
+      'Embedded development tool especially Rhapsody, Polyspace, WindIdea, Davinci, DOORs, PTC. '
+      'Be proficient with C programming language, firmware, bare-metal programming. '
+      'Be familiar with embedded microcontroller 16 or 32-bit microprocessor is a plus. '
+      'Write and review Software specifications, Architecture and Design documents for the system. '
+      'Experience with simulation and development tools, e.g. Vector CANoe, etc. '
+      'Real time operating system OSEK programming experience preferred. '
+      'Knowledge on Communication and Diagnostic protocols: CAN, LIN, Ethernet and TCP/IP protocols and UDS. '
+      'Required Skills. Knowledge and skills related to AUTOSAR, CAN, MEM, UDS, RTOS. '
+      'Nice to have experience with Flash BootLoader. '
+      'Good communication in English and presentation skills. '
+      'Familiarity with Agile methodology is an advantage. '
+      'Our Offer. Clear development and qualification path in our consulting organization. '
+      'International working environment. '
+      'The involvement of the entire project development of HELLA products. '
+      'Attractive benefits with healthcare insurances, HELLA activities for employees. '
+      'International trainings in HELLA facilities if needed. '
+      'Our Benefits. Guaranteed 13th month salary. '
+      'Performance bonus. '
+      'Service bonus of 1 month salary after 2 years working with HELLA. '
+      'Lunch and mobile allowance.';
+
+  String get demoUpsellPrompt => _s(
+    'Do you want to maximize competitive advantage before applying?',
+    'Bạn có muốn tối ưu hồ sơ để tăng lợi thế cạnh tranh trước khi ứng tuyển không?',
+  );
+
+  String demoCvAutoAttach(String fileName) => _s(
+    'This form needs your CV file. I will take your CV uploaded in the settings $fileName to put it in the form.',
+    'Mẫu này cần file CV của bạn. Tôi sẽ lấy file CV $fileName bạn đã tải lên trong cài đặt để đính kèm vào mẫu đơn.',
+  );
+
+  String get demoCvUploaded => _s('CV file uploaded.', 'Đã tải file CV lên.');
+
+  /// The uniform per-field pattern: "Label: value. Say yes to confirm or
+  /// edit the field."
+  String demoFieldConfirm(String label, String value) => _s(
+    '$label: $value. Say yes to confirm or edit the field.',
+    '$label: $value. Nói có để xác nhận hoặc sửa lại mục này.',
+  );
+
+  /// A section header spoken plainly, e.g. "Working preference".
+  String demoSection(String title) => title;
+
+  /// A field the form left blank, offering to fill it in.
+  String demoFieldMissing(String label) => _s(
+    '$label: Missing. Do you want to fill in?',
+    '$label: Còn thiếu. Bạn có muốn điền vào không?',
+  );
+
+  String demoOptionalMultiChoice(String label) => _s(
+    '$label (optional): what do you want to choose or skip?',
+    '$label (không bắt buộc): bạn muốn chọn gì, hay bỏ qua?',
+  );
+
+  String get demoExpectedSalaryPrompt => _s(
+    'Expected salary in USD (compulsory): what is your expected salary?',
+    'Mức lương mong muốn bằng USD (bắt buộc): bạn mong muốn mức lương bao nhiêu?',
+  );
+
+  String get demoShowSalaryToggle => _s(
+    'Do you want to show your expected salary to employer? Say yes to confirm or edit the field.',
+    'Bạn có muốn hiển thị mức lương mong muốn cho nhà tuyển dụng không? Nói có để xác nhận hoặc sửa lại mục này.',
+  );
+
+  String get demoPrivacyPolicyPrompt => _s(
+    'Do you agree to the Privacy Policy of this employer?',
+    'Bạn có đồng ý với Chính sách bảo mật của nhà tuyển dụng này không?',
+  );
+
+  String get demoBoxTicked => _s(
+    'Box ticked. Say confirm to submit, or say edit followed by a field name.',
+    'Đã đánh dấu ô. Nói xác nhận để nộp đơn, hoặc nói sửa lại kèm tên mục.',
+  );
+
+  /// The edit-loop-back confirmation after a spoken "change X to Y"
+  /// request, mirroring the real flow's edit mechanism but recited
+  /// verbatim for the scripted demo.
+  String demoFieldChanged(String label, String newValue) => _s(
+    'Your $label have been changed to $newValue',
+    '$label của bạn đã được đổi thành $newValue',
+  );
+
+  /// The shorter re-prompt after an edit, without the "Box ticked." prefix
+  /// (the box was already ticked before the edit interrupted the flow).
+  String get demoConfirmOrEditPrompt => _s(
+    'Say confirm to submit, or say edit followed by a field name.',
+    'Nói xác nhận để nộp đơn, hoặc nói sửa lại kèm tên mục.',
   );
 }

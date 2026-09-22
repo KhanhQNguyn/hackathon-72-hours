@@ -44,4 +44,14 @@ class AppConfig {
     'DEBUG_SCRIPTED_VOICE',
     defaultValue: false,
   );
+
+  /// Debug-only: shows a button that plays the standalone scripted
+  /// scenario demo (`lib/mocks/scripted_demo_flow.dart`) — a literal,
+  /// pre-written "play script" recited via TTS, entirely independent of
+  /// the FSM/controller/real AI. `--dart-define=DEBUG_SCENARIO_DEMO=true`
+  /// to enable.
+  static const bool debugScenarioDemo = bool.fromEnvironment(
+    'DEBUG_SCENARIO_DEMO',
+    defaultValue: false,
+  );
 }

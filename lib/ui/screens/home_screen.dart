@@ -2,10 +2,15 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/app_config.dart';
 import '../../core/narration_lookup.dart';
 import '../../core/theme.dart';
+import '../../mocks/fake_webview_controller_service.dart';
+import '../../mocks/scripted_demo_flow.dart';
 import '../../orchestration/application_flow_controller.dart';
 import '../../orchestration/application_flow_fsm.dart';
+import '../../services/preferences_service.dart';
+import '../../services/tts_service.dart';
 import '../widgets/job_page_view.dart';
 import '../widgets/status_narration_view.dart';
 import '../widgets/voice_trigger_button.dart';
@@ -89,6 +94,10 @@ class HomeScreen extends StatelessWidget {
                 label: const Text('Debug: spike harness'),
               ),
             ],
+            if (AppConfig.debugScenarioDemo) ...[
+              const SizedBox(height: 12),
+              const _ScenarioDemoButton(),
+            ],
             if (showWebView) ...[
               const SizedBox(height: 24),
               Text('Job page', style: Theme.of(context).textTheme.titleMedium),
@@ -98,6 +107,92 @@ class HomeScreen extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Debug-only trigger for the standalone scripted scenario demo — a
+/// literal, pre-written "play script" recited via TTS, entirely
+/// independent of the FSM/controller/real AI (see
+/// `lib/mocks/scripted_demo_flow.dart`). Shows a live caption of the
+/// current line (and its scripted reply, once spoken) as a
+/// `Semantics(liveRegion: true)` region, mirroring [StatusNarrationView]'s
+/// convention of never being audio-only.
+class _ScenarioDemoButton extends StatefulWidget {
+  const _ScenarioDemoButton();
+
+  @override
+  State<_ScenarioDemoButton> createState() => _ScenarioDemoButtonState();
+}
+
+class _ScenarioDemoButtonState extends State<_ScenarioDemoButton> {
+  bool _running = false;
+  String _currentLine = '';
+  String? _userReply;
+
+  Future<void> _run() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _currentLine = '';
+      _userReply = null;
+    });
+
+    final tts = context.read<TtsService>();
+    final preferences = context.read<PreferencesService>();
+    final language = await preferences.getLanguagePref();
+    final n = FlowNarration(language);
+    final cards = FakeWebViewControllerService.cannedResultCards;
+    final steps = buildScenarioDemoScript(
+      cards: cards,
+      chosenCard: cards.first,
+    );
+
+    await runScriptedDemoFlow(
+      steps: steps,
+      n: n,
+      tts: tts,
+      onNarration: (text) {
+        if (mounted) {
+          setState(() {
+            _currentLine = text;
+            _userReply = null;
+          });
+        }
+      },
+      onUserReply: (text) {
+        if (mounted) setState(() => _userReply = text);
+      },
+    );
+
+    if (mounted) setState(() => _running = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextButton.icon(
+          onPressed: _running ? null : _run,
+          icon: const Icon(Icons.theaters_outlined),
+          label: Text(
+            _running ? 'Playing scripted demo…' : 'Debug: play scripted demo',
+          ),
+        ),
+        if (_currentLine.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              _userReply == null
+                  ? 'A: $_currentLine'
+                  : 'A: $_currentLine\nB: $_userReply',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
