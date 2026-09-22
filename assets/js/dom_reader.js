@@ -417,6 +417,129 @@
     document.addEventListener('DOMContentLoaded', __domReader_attachMutationObserver);
   }
 
+  // ---------------------------------------------------------------------
+  // Real-target demo flow (VietnamWorks-specific, deliberately not
+  // generalized — see the "search_job" task brief). These four
+  // heuristics are tuned to vietnamworks.com's actual markup as observed
+  // live; they are not meant to work on any other site.
+  // ---------------------------------------------------------------------
+
+  // The homepage's "Tìm kiếm" search-submit button doesn't share
+  // vocabulary with __domReaderSubmitKeywords (submit/apply/nộp/...), and
+  // deliberately isn't added there either: that list is also used to
+  // find the real application-submit button, and mixing the two risks
+  // the search button being picked up as a false-positive submit
+  // candidate on a listing/apply page that also has a header search box.
+  function __domReader_locateSearchSubmitButton() {
+    var byClass = document.querySelector('button.search__button');
+    if (byClass && __domReader_isVisible(byClass)) {
+      return JSON.stringify({ elementId: __domReader_ensureNodeId(byClass) });
+    }
+    var candidates = Array.prototype.slice.call(
+      document.querySelectorAll('button, [role="button"]')
+    );
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      var text = (el.textContent || '').trim().toLowerCase();
+      var ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+      if ((text === 'tìm kiếm' || ariaLabel.indexOf('tìm kiếm') !== -1) && __domReader_isVisible(el)) {
+        return JSON.stringify({ elementId: __domReader_ensureNodeId(el) });
+      }
+    }
+    return JSON.stringify({ elementId: null });
+  }
+
+  // Extracts job cards from a VietnamWorks search-results page
+  // (`.view_job_item`). Each card's inner text is a handful of lines in
+  // a fixed order: title (sometimes prefixed with a "Mới"/"Hot"/"Gấp"
+  // badge), then a mix of a badge word, a salary line, company and
+  // location, up to a "Cập nhật ..." (updated) line. Validated against a
+  // job-detail link matching VietnamWorks' own "-NNNNN-jv"/"-jd" URL
+  // pattern so unrelated cards (ads, "featured company" tiles) are
+  // skipped. Capped well above what one results page actually shows.
+  function __domReader_getResultCards() {
+    var jobHrefRe = /-\d{5,}-j[vd]$/i;
+    var badgeRe = /^(urgent|hot|nổi bật|gấp)$/i;
+    var salaryRe = /thương lượng|triệu|usd|\$|\d+\s*-\s*\d+/i;
+    var maxCards = 15;
+
+    var cards = Array.prototype.slice.call(document.querySelectorAll('.view_job_item'));
+    var results = [];
+    for (var i = 0; i < cards.length && results.length < maxCards; i++) {
+      var card = cards[i];
+      var link = card.querySelector('a.img_job_card[href]') || card.querySelector('a[href]');
+      if (!link) continue;
+      var href = link.getAttribute('href') || '';
+      if (!jobHrefRe.test(href)) continue;
+
+      var lines = (card.innerText || '')
+        .split('\n')
+        .map(function (s) { return s.trim(); })
+        .filter(function (s) { return s.length > 0; });
+      if (lines.length === 0) continue;
+
+      var title = lines[0].replace(/^(Mới|Hot|Gấp)\s+/i, '');
+      var company = null;
+      var location = null;
+      for (var j = 1; j < lines.length; j++) {
+        var line = lines[j];
+        if (/^cập nhật/i.test(line) || line === '|') break;
+        if (badgeRe.test(line) || salaryRe.test(line)) continue;
+        if (company === null) {
+          company = line;
+        } else if (location === null) {
+          location = line;
+          break;
+        }
+      }
+
+      results.push({
+        elementId: __domReader_ensureNodeId(card),
+        title: title,
+        company: company || '',
+        location: location || '',
+      });
+    }
+    return JSON.stringify(results);
+  }
+
+  // Clicking a job's "Nộp đơn" (apply) button can surface an interstitial
+  // AI-resume-optimization upsell modal before the real application form
+  // appears. Dismisses it via its primary continue-through CTA; a no-op
+  // (returns dismissed:false) when there is nothing to dismiss.
+  function __domReader_dismissApplyUpsell() {
+    var candidates = Array.prototype.slice.call(document.querySelectorAll('button, [role="button"]'));
+    for (var i = 0; i < candidates.length; i++) {
+      var text = (candidates[i].textContent || '').trim();
+      if (/tiếp tục ứng tuyển|bỏ qua tối ưu/i.test(text) && __domReader_isVisible(candidates[i])) {
+        candidates[i].click();
+        return JSON.stringify({ dismissed: true });
+      }
+    }
+    return JSON.stringify({ dismissed: false });
+  }
+
+  // Best-effort success detection after a real apply-form submit.
+  // UNVERIFIED against a real completed submission (deliberately never
+  // exercised live while building this — see the audit's safety note);
+  // this is a best guess at VietnamWorks' real wording, not a confirmed
+  // observation, so a caller must still time out and fall back to
+  // error/retry narration rather than trust a false negative here as
+  // proof of failure.
+  function __domReader_detectApplySuccess() {
+    var successRe = /ứng tuyển thành công|nộp hồ sơ thành công|đã ứng tuyển|application (submitted|sent) successfully|applied successfully/i;
+    var all = document.querySelectorAll('body *');
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (el.children.length > 0) continue; // leaf nodes only
+      var text = (el.textContent || '').trim();
+      if (text.length > 0 && text.length < 200 && successRe.test(text) && __domReader_isVisible(el)) {
+        return JSON.stringify({ success: true, signal: text.slice(0, 100) });
+      }
+    }
+    return JSON.stringify({ success: false });
+  }
+
   // Expose on window so Dart can call these on demand via
   // evaluateJavascript (e.g. `window.__domReader_getImages()`).
   window.__domReader_getImages = __domReader_getImages;
@@ -426,4 +549,8 @@
   window.__domReader_getVisibleText = __domReader_getVisibleText;
   window.__domReader_detectCaptcha = __domReader_detectCaptcha;
   window.__domReader_findAndClickAudioChallengeButton = __domReader_findAndClickAudioChallengeButton;
+  window.__domReader_locateSearchSubmitButton = __domReader_locateSearchSubmitButton;
+  window.__domReader_getResultCards = __domReader_getResultCards;
+  window.__domReader_dismissApplyUpsell = __domReader_dismissApplyUpsell;
+  window.__domReader_detectApplySuccess = __domReader_detectApplySuccess;
 })();

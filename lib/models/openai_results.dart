@@ -7,10 +7,16 @@ class IntentType {
   static const String navigateToElement = 'navigate_to_element';
   static const String unrecognized = 'unrecognized';
 
+  /// Real-target demo flow: "find me a software engineer job on
+  /// VietnamWorks" — search, then read results, rather than jumping
+  /// straight to a fixed listing (milestone36 extension).
+  static const String searchJob = 'search_job';
+
   static const Set<String> all = {
     readListing,
     fillAndSubmit,
     navigateToElement,
+    searchJob,
     unrecognized,
   };
 }

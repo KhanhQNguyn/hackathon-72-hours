@@ -379,4 +379,72 @@ class FlowNarration {
     'Moving around the page by voice is not available yet.',
     'Chức năng di chuyển trên trang bằng giọng nói chưa có.',
   );
+
+  // --- real-target demo flow: search VietnamWorks (item A/B/C/E/F) -------
+
+  String searchingFor(String query) => _s(
+    'Searching VietnamWorks for $query...',
+    'Đang tìm $query trên VietnamWorks...',
+  );
+
+  String get searchBarLabel => _s('Search bar', 'Thanh tìm kiếm');
+
+  String get noResultsFound => _s(
+    "I couldn't find any job listings for that search.",
+    'Tôi không tìm thấy tin tuyển dụng nào cho tìm kiếm đó.',
+  );
+
+  String resultsFound(int count) => _s(
+    'I found $count job listings. Let me read them to you.',
+    'Tôi tìm thấy $count tin tuyển dụng. Để tôi đọc cho bạn nghe.',
+  );
+
+  String resultCardLabel(int index, String title, String company, String location) {
+    final where = [
+      if (company.isNotEmpty) company,
+      if (location.isNotEmpty) location,
+    ].join(', ');
+    return _s(
+      'Result $index: $title${where.isEmpty ? '' : ' at $where'}.',
+      'Kết quả $index: $title${where.isEmpty ? '' : ' tại $where'}.',
+    );
+  }
+
+  String get whichResult => _s(
+    'Which one would you like? You can say the job title or company.',
+    'Bạn muốn công việc nào? Bạn có thể nói tên công việc hoặc tên công ty.',
+  );
+
+  String get noMatchingResult => _s(
+    "I couldn't match that to any of the listings. Could you say the job title or company again?",
+    'Tôi không khớp được với tin tuyển dụng nào. Bạn nói lại tên công việc hoặc tên công ty được không?',
+  );
+
+  String confirmApply(String title) => _s(
+    'Do you want to apply to $title? Say yes to continue.',
+    'Bạn có muốn ứng tuyển vào $title không? Nói có để tiếp tục.',
+  );
+
+  String get applyButtonLabel => _s('Apply button', 'Nút ứng tuyển');
+
+  String get submitButtonLabel => _s('Submit button', 'Nút nộp đơn');
+
+  String get openingApplyForm => _s(
+    'Opening the application form...',
+    'Đang mở mẫu đơn ứng tuyển...',
+  );
+
+  String get applyFormNotFound => _s(
+    "I couldn't open the application form for this job.",
+    'Tôi không mở được mẫu đơn ứng tuyển cho công việc này.',
+  );
+
+  /// Spoken instead of [done] when the submit click succeeded but
+  /// [WebViewControllerService.detectApplySuccess] never confirmed it
+  /// within the polling window (item F) — the flow must not claim
+  /// success it couldn't verify.
+  String get submitUnconfirmed => _s(
+    "I clicked submit, but I couldn't confirm your application actually went through. Please check the page.",
+    'Tôi đã nhấn nộp đơn, nhưng không xác nhận được đơn đã được gửi thành công. Hãy kiểm tra lại trang.',
+  );
 }

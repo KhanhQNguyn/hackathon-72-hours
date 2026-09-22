@@ -176,6 +176,14 @@ class SpyWebView extends FakeWebViewControllerService {
     }
     return clickSucceeds;
   }
+
+  /// Overrides the fake base class's default `true` for the real-target
+  /// demo flow's success-detection tests (item F).
+  bool? detectApplySuccessOverride;
+
+  @override
+  Future<bool> detectApplySuccess() async =>
+      detectApplySuccessOverride ?? await super.detectApplySuccess();
 }
 
 /// A scripted stand-in for the OpenAI layer.

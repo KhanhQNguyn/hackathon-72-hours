@@ -217,6 +217,13 @@ class ApplicationFlowController extends ChangeNotifier {
   List<DomFormField> _fields = [];
   FlowNarration _n = FlowNarration(AppLanguage.en);
 
+  /// One-shot: set at the start of the real-target search_job flow so
+  /// [submitApplication] also polls for a real success signal (item F)
+  /// before declaring done, instead of trusting the click alone as every
+  /// other flow through this method still does. Reset after each use so
+  /// it never leaks into an unrelated run.
+  bool _requireSubmitSuccessSignal = false;
+
   /// `'en'` / `'vi'`, refreshed at the start of a run and by
   /// [refreshLanguage] when the settings screen changes it.
   String language = AppLanguage.en;
@@ -273,6 +280,7 @@ class ApplicationFlowController extends ChangeNotifier {
       if (fsm.state is! IdleState) await fsm.transition(const FlowReset());
       lastNarration = '';
       _values.clear();
+      _requireSubmitSuccessSignal = false;
       notifyListeners();
       await _run();
       await _retryByVoice();
@@ -324,6 +332,10 @@ class ApplicationFlowController extends ChangeNotifier {
       await fsm.transition(const FlowReset());
       return;
     }
+    if (intent.intentType == IntentType.searchJob) {
+      await _runSearchJobFlow(intent.targetDescription ?? '');
+      return;
+    }
     await fsm.transition(const IntentParsed());
 
     await narrate(_n.loadingPage);
@@ -370,7 +382,16 @@ class ApplicationFlowController extends ChangeNotifier {
       ),
     );
 
-    // Per-field confirm loop.
+    if (!await _runFieldLoop()) return;
+    await _finalReviewAndSubmit();
+  }
+
+  /// The per-field confirm loop (spec.md §5): drains `FillingFormState`
+  /// one field at a time. Shared by the linear flow above and the
+  /// real-target search_job flow ([_runSearchJobFlow]) once the apply
+  /// form's fields are known. Returns `false` if the run ended (in error)
+  /// mid-loop, in which case the caller must not proceed further.
+  Future<bool> _runFieldLoop() async {
     while (fsm.state is FillingFormState) {
       final state = fsm.state as FillingFormState;
       final field = _fieldById(state.currentFieldId);
@@ -383,11 +404,235 @@ class ApplicationFlowController extends ChangeNotifier {
         case _Outcome.confirmed || _Outcome.skipped:
           await fsm.transition(FieldConfirmed(field.elementId));
         case _Outcome.aborted:
-          return;
+          return false;
       }
     }
+    return true;
+  }
 
+  // --- real-target demo flow: search VietnamWorks (search_job intent) -------
+  //
+  // Deliberately VietnamWorks-specific throughout (task brief: "do not
+  // build this generically") — every heuristic it relies on
+  // (dom_reader.js's locateSearchSubmitButton/getResultCards/
+  // dismissApplyUpsell/detectApplySuccess) assumes vietnamworks.com's
+  // real DOM shape, not a general site.
+  //
+  // Sequence: open homepage -> type+submit the real search (or, behind
+  // AppConfig.liveSearchTyping=false, skip straight to a direct results
+  // URL) -> read the real result cards aloud, matching the user's spoken
+  // reply by word overlap -> click into the chosen job's detail page and
+  // reuse the existing read_listing narration -> ask to apply -> click
+  // the real "Nộp đơn" button (reusing the generic submitCandidates
+  // heuristic, which already recognizes it) and dismiss the AI-upsell
+  // modal VNW sometimes shows -> reuse the existing per-field loop and
+  // final review/submit, with success verification switched on.
+
+  Future<void> _runSearchJobFlow(String query) async {
+    await fsm.transition(const IntentParsed());
+    await narrate(_n.searchingFor(query));
+
+    if (!await _openSearchResults(query)) return;
+    await fsm.transition(const TargetLoaded());
+
+    await _waitForStable();
+    var dom = await webView.readDom();
+    switch (await _handleCaptcha()) {
+      case _Outcome.aborted:
+        return;
+      case _Outcome.confirmed:
+        await _waitForStable();
+        dom = await webView.readDom();
+      case _Outcome.skipped:
+        break;
+    }
+
+    final cards = await webView.getResultCards();
+    Logger.log('results: found ${cards.length} job cards');
+    if (cards.isEmpty) {
+      await _fail(_n.noResultsFound);
+      return;
+    }
+
+    await narrate(_n.resultsFound(cards.length));
+    for (var i = 0; i < cards.length; i++) {
+      final c = cards[i];
+      await _locateAndAnnounce(
+        c.elementId,
+        _n.resultCardLabel(i + 1, c.title, c.company, c.location),
+      );
+    }
+
+    await narrate(_n.whichResult);
+    JobResultCard? chosen;
+    for (var attempt = 0; attempt < 3 && chosen == null; attempt++) {
+      final reply = await _gate.listenConfident();
+      if (reply == null) {
+        await _fail(_n.errNoListingReply);
+        return;
+      }
+      chosen = _matchResultCard(reply, cards);
+      if (chosen == null) {
+        Logger.log('results: no card matched reply "$reply"');
+        await narrate(_n.noMatchingResult);
+      }
+    }
+    if (chosen == null) {
+      await _fail(_n.errNoListingReply);
+      return;
+    }
+    Logger.log('results: matched "${chosen.title}" at ${chosen.company}');
+
+    await _locateAndAnnounce(chosen.elementId, chosen.title);
+    if (!await webView.clickElement(chosen.elementId)) {
+      await _fail(_n.applyFormNotFound);
+      return;
+    }
+
+    // Now on the chosen job's detail page. Still conceptually the same
+    // "loading the target" phase that began at the homepage — the FSM
+    // only has one TargetLoaded/ContentRead pair, and ContentRead below
+    // marks when the JOB's content (not the results page's) was read.
+    await _waitForStable();
+    dom = await webView.readDom();
+    switch (await _handleCaptcha()) {
+      case _Outcome.aborted:
+        return;
+      case _Outcome.confirmed:
+        await _waitForStable();
+        dom = await webView.readDom();
+      case _Outcome.skipped:
+        break;
+    }
+    await fsm.transition(const ContentRead());
+
+    await _narrateListing(dom); // reused as-is (item E)
+
+    await narrate(_n.confirmApply(chosen.title));
+    final applyReply = await _gate.listenConfident();
+    if (applyReply == null) {
+      await _fail(_n.errNoListingReply);
+      return;
+    }
+    if (!isAffirmative(applyReply)) {
+      await narrate(_n.listingDeclined);
+      await fsm.transition(const FlowReset());
+      return;
+    }
+
+    if (!await _openApplyForm(dom)) return;
+
+    final formDom = await webView.readDom();
+    _fields = _formFields(formDom);
+    _profile = await _loadProfile();
+    _requireSubmitSuccessSignal = true;
+    await fsm.transition(
+      ListingConfirmed(
+        _fields.map((f) => f.elementId).toList(),
+        fieldTypes: {
+          for (final f in _fields)
+            if (f.type != null) f.elementId: f.type!,
+        },
+      ),
+    );
+
+    if (!await _runFieldLoop()) return;
     await _finalReviewAndSubmit();
+  }
+
+  /// Item B: types into VNW's real search bar and submits, or (behind
+  /// [AppConfig.liveSearchTyping]) loads a direct results URL for
+  /// [query]. Also the fallback when live typing itself fails — one
+  /// flag, one code path, per the task's explicit instruction not to
+  /// build two separate implementations.
+  Future<bool> _openSearchResults(String query) async {
+    if (AppConfig.liveSearchTyping) {
+      if (await _tryLiveSearch(query)) {
+        Logger.log('search: live search bar typing succeeded');
+        return true;
+      }
+      Logger.log('search: live typing failed, falling back to a direct results URL');
+    } else {
+      Logger.log('search: liveSearchTyping disabled, using a direct results URL');
+    }
+    return _loadUrl(_directResultsUrl(query));
+  }
+
+  Future<bool> _tryLiveSearch(String query) async {
+    if (!await _loadUrl(AppConfig.targetUrl)) return false;
+    await _waitForStable();
+    final dom = await webView.readDom();
+    if (dom.searchCandidates.isEmpty) {
+      Logger.log('search: no search bar found on the homepage');
+      return false;
+    }
+
+    final searchBar = dom.searchCandidates.first;
+    await _locateAndAnnounce(searchBar.elementId, _n.searchBarLabel);
+    if (!(await webView.fillField(searchBar.elementId, query)).success) {
+      Logger.log('search: could not type into the search bar');
+      return false;
+    }
+
+    final submitId = await webView.locateSearchSubmitButton();
+    if (submitId == null) {
+      Logger.log('search: no search submit button found');
+      return false;
+    }
+    await webView.clickElement(submitId);
+    await _waitForStable();
+    return true;
+  }
+
+  /// VietnamWorks' own query-slug format (e.g. "software engineer" ->
+  /// "software-engineer"), confirmed by driving the live search once
+  /// while building this — a best-effort guess for non-English queries,
+  /// not separately confirmed live (task's accepted VNW-specific
+  /// brittleness).
+  String _directResultsUrl(String query) {
+    final slug = query.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '-');
+    return '${AppConfig.targetUrl}/viec-lam?q=${Uri.encodeComponent(slug)}';
+  }
+
+  /// Matches the user's full spoken reply (e.g. "I choose X at Y in Z")
+  /// against each card's title+company+location by word overlap — see
+  /// `FuzzyMatchService.bestMatchByWordOverlap`'s doc for why whole-string
+  /// similarity is the wrong tool for this comparison.
+  JobResultCard? _matchResultCard(String reply, List<JobResultCard> cards) {
+    final labels = cards
+        .map((c) => '${c.title} ${c.company} ${c.location}')
+        .toList();
+    final matched = _fuzzy.bestMatchByWordOverlap(reply, labels);
+    if (matched == null) return null;
+    return cards[labels.indexOf(matched)];
+  }
+
+  /// Item E: locates and clicks VNW's real "Nộp đơn" (apply) button —
+  /// already recognized by the existing generic submitCandidates
+  /// heuristic (its keyword list already includes "nộp"/"apply") — then
+  /// dismisses the AI-resume-optimization upsell modal VNW sometimes
+  /// shows before the real apply form appears.
+  Future<bool> _openApplyForm(DomSnapshot dom) async {
+    if (dom.submitCandidates.isEmpty) {
+      Logger.log('apply_click: no apply button found on the job page');
+      await _fail(_n.applyFormNotFound);
+      return false;
+    }
+    final applyButton = dom.submitCandidates.first;
+    await _locateAndAnnounce(applyButton.elementId, _n.applyButtonLabel);
+    if (!await webView.clickElement(applyButton.elementId)) {
+      Logger.log('apply_click: could not click the apply button');
+      await _fail(_n.applyFormNotFound);
+      return false;
+    }
+
+    await _waitForStable();
+    final dismissed = await webView.dismissApplyUpsell();
+    Logger.log('apply_click: upsell modal dismissed=$dismissed');
+    await _waitForStable();
+
+    await narrate(_n.openingApplyForm);
+    return true;
   }
 
   /// Final review with the edit loop-back and checkpoint 2, then submit.
@@ -469,6 +714,7 @@ class ApplicationFlowController extends ChangeNotifier {
     }
 
     final accepted = _gate.lastAccepted;
+    Logger.log('intent: transcript="${accepted?.transcript}" alternatives=${accepted?.alternatives}');
     IntentResult? result;
     Future<bool> attempt() async {
       try {
@@ -476,6 +722,10 @@ class ApplicationFlowController extends ChangeNotifier {
           transcript: accepted?.transcript ?? '',
           alternatives: accepted?.alternatives ?? const [],
           languagePref: language,
+        );
+        Logger.log(
+          'intent: type=${result!.intentType} confidence=${result!.confidence} '
+          'targetDescription="${result!.targetDescription}"',
         );
         return true;
       } on OpenAiException catch (e) {
@@ -498,10 +748,17 @@ class ApplicationFlowController extends ChangeNotifier {
 
   // --- page + listing (milestones 22, 37, 38) -------------------------------
 
-  Future<bool> _loadTarget() async {
+  Future<bool> _loadTarget() => _loadUrl(AppConfig.targetUrl);
+
+  /// Loads [url] in the WebView, retrying once via the FSM's
+  /// `ErrorOccurred(retryAction:)` mechanism on failure. Factored out of
+  /// the original `_loadTarget()` so the real-target search_job flow can
+  /// load the VNW homepage or a direct results URL through the same
+  /// retry/error-narration path (item B).
+  Future<bool> _loadUrl(String url) async {
     Future<bool> attempt() async {
       try {
-        await webView.loadTarget(AppConfig.targetUrl);
+        await webView.loadTarget(url);
         return true;
       } on PageLoadException catch (e) {
         Logger.log('flow: page load failed: ${e.message}');
@@ -704,12 +961,25 @@ class ApplicationFlowController extends ChangeNotifier {
 
   // --- the per-field loop -----------------------------------------------------
 
+  /// Shared focus-highlight + speak-label utility (item D): outlines
+  /// [nodeId] on the real page and speaks [label], without waiting for
+  /// speech to finish before returning (the highlight starts alongside
+  /// the narration; blocking until TTS fully completes would make every
+  /// step feel sluggish). Called from every place the flow acts on a new
+  /// element — the search bar, each result card, the matched job's
+  /// title, the apply button, and every form field below.
+  Future<void> _locateAndAnnounce(String nodeId, String label) async {
+    await webView.highlightElement(nodeId);
+    unawaited(narrate(label));
+  }
+
   /// Collects, fills and confirms one field.
   Future<_Outcome> _fillOne(
     DomFormField field, {
     required bool offerSaved,
   }) async {
     final label = _labelOf(field);
+    await _locateAndAnnounce(field.elementId, label);
     final key = _profileKey(field);
 
     if (field.type == 'file') return _attachCv(field);
@@ -960,9 +1230,33 @@ class ApplicationFlowController extends ChangeNotifier {
       }
     }
 
+    await _locateAndAnnounce(pick.elementId, _n.submitButtonLabel);
     if (!await webView.clickElement(pick.elementId)) {
       throw FlowFailure(_n.errSubmitClick);
     }
+
+    if (_requireSubmitSuccessSignal) {
+      _requireSubmitSuccessSignal = false; // one-shot
+      Logger.log('success_detect: polling for a real success signal');
+      if (!await _pollForSubmitSuccess()) {
+        Logger.log('success_detect: no success signal within the timeout');
+        throw FlowFailure(_n.submitUnconfirmed);
+      }
+      Logger.log('success_detect: success signal detected');
+    }
+  }
+
+  /// Item F: polls [WebViewControllerService.detectApplySuccess] a few
+  /// times after a real submit click. Only engaged when
+  /// [_requireSubmitSuccessSignal] is set (the real-target search_job
+  /// flow) — every other caller of [submitApplication] keeps its
+  /// original click-and-trust behaviour unchanged.
+  Future<bool> _pollForSubmitSuccess() async {
+    for (var i = 0; i < 6; i++) {
+      if (await webView.detectApplySuccess()) return true;
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+    }
+    return false;
   }
 
   // --- helpers ---------------------------------------------------------------------

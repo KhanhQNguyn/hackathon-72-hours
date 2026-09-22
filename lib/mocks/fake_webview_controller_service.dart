@@ -63,6 +63,21 @@ class FakeWebViewControllerService implements WebViewControllerService {
   Future<void> focusElement(String nodeRef) async {}
 
   @override
+  Future<String?> locateSearchSubmitButton() async => 'n-search-submit';
+
+  @override
+  Future<List<JobResultCard>> getResultCards() async => cannedResultCards;
+
+  @override
+  Future<bool> dismissApplyUpsell() async => false;
+
+  @override
+  Future<bool> detectApplySuccess() async => true;
+
+  @override
+  Future<void> highlightElement(String nodeId) async {}
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError(
     'FakeWebViewControllerService: ${invocation.memberName} not faked yet',
   );
@@ -139,4 +154,20 @@ class FakeWebViewControllerService implements WebViewControllerService {
         'Flutter, REST APIs. How to apply: fill in the form below.',
     truncated: false,
   );
+
+  /// A plausible VietnamWorks-style results page for the search_job flow.
+  static const List<JobResultCard> cannedResultCards = [
+    JobResultCard(
+      elementId: 'n-card-0',
+      title: 'Software Engineer',
+      company: 'Example Tech Co.',
+      location: 'Hà Nội',
+    ),
+    JobResultCard(
+      elementId: 'n-card-1',
+      title: 'Senior Software Engineer',
+      company: 'Wistron NeWeb Corporation (WNC)',
+      location: 'Hà Nam',
+    ),
+  ];
 }

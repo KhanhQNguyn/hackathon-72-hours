@@ -103,9 +103,38 @@
     return JSON.stringify({ success: true, name: file ? file.name : '' });
   }
 
+  // Real-target demo flow (item D, shared focus-highlight utility): a
+  // temporary visual outline on the real third-party page so a sighted
+  // observer (e.g. watching the demo) can see what the app is about to
+  // act on, paired on the Dart side with a spoken label
+  // (WebViewControllerService.highlightElement /
+  // ApplicationFlowController._locateAndAnnounce). Clears the previous
+  // highlight so only one element is outlined at a time.
+  var __formFillerLastHighlighted = null;
+
+  function __formFiller_highlightElement(nodeId) {
+    var el = document.querySelector('[data-app-node-id="' + nodeId + '"]');
+    if (!el) return JSON.stringify({ success: false, reason: 'node_stale' });
+
+    if (__formFillerLastHighlighted && __formFillerLastHighlighted !== el) {
+      __formFillerLastHighlighted.style.outline = '';
+      __formFillerLastHighlighted.style.outlineOffset = '';
+    }
+    el.style.outline = '4px solid #FFFF00';
+    el.style.outlineOffset = '2px';
+    try {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } catch (e) {
+      // scrollIntoView options unsupported on some WebViews — non-fatal.
+    }
+    __formFillerLastHighlighted = el;
+    return JSON.stringify({ success: true });
+  }
+
   window.__formFiller_setValue = __formFiller_setValue;
   window.__formFiller_verifyValue = __formFiller_verifyValue;
   window.__formFiller_clickFileInput = __formFiller_clickFileInput;
   window.__formFiller_clickElement = __formFiller_clickElement;
   window.__formFiller_getFileName = __formFiller_getFileName;
+  window.__formFiller_highlightElement = __formFiller_highlightElement;
 })();

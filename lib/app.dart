@@ -6,6 +6,7 @@ import 'core/platform_support.dart';
 import 'core/theme.dart';
 import 'mocks/fake_pdf_reader_service.dart';
 import 'mocks/fake_webview_controller_service.dart';
+import 'mocks/scripted_speech_service.dart';
 import 'orchestration/application_flow_controller.dart';
 import 'orchestration/application_flow_fsm.dart';
 import 'orchestration/captcha_checkpoint_handler.dart';
@@ -59,7 +60,20 @@ class App extends StatelessWidget {
         ),
         Provider<SpeechService>(
           create: (ctx) =>
-              SpeechService(preferences: ctx.read<PreferencesService>()),
+              useMockServices && AppConfig.debugScriptedVoice
+                  ? ScriptedSpeechService(const [
+                      'I want to find software engineer job on VietnamWorks',
+                      'I choose Automation and Smart Manufacturing Software '
+                          'Engineer in Wistron NeWeb Corporation (WNC) in '
+                          'Hà Nam',
+                      'yes', // confirm apply
+                      'yes', // name: use saved value
+                      'yes', // phone: use saved value
+                      'yes', // email: use saved value
+                      'yes', // final review: confirm submit
+                      'yes', // padding, in case of an extra prompt
+                    ])
+                  : SpeechService(preferences: ctx.read<PreferencesService>()),
         ),
         Provider<ApplicantProfileService>(
           create: (_) => ApplicantProfileService(),

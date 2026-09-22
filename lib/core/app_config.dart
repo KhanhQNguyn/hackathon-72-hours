@@ -22,4 +22,26 @@ class AppConfig {
   /// PDF path used by mocked runs. On a real run the user picks the file
   /// (there is no listing-to-PDF link to follow yet, 01-intent.md §7).
   static const String applicationFormPdfPath = 'application_form.pdf';
+
+  /// Real-target demo flow (search_job intent), item B. When true (the
+  /// default), the flow types into VietnamWorks' real search bar and
+  /// clicks its real search button. When false, it skips straight to a
+  /// results URL built from the query, bypassing the live-typing step —
+  /// the fallback to flip if the search bar proves flaky close to the
+  /// deadline. `--dart-define=LIVE_SEARCH_TYPING=false` to disable.
+  static const bool liveSearchTyping = bool.fromEnvironment(
+    'LIVE_SEARCH_TYPING',
+    defaultValue: true,
+  );
+
+  /// Debug-only: when true (and only combined with [useMockServices]),
+  /// replaces the real speech recognizer with a canned script of replies
+  /// matching the real-target demo scenario, so the flow can be watched
+  /// end-to-end on a real device without depending on the on-device
+  /// recognizer correctly capturing a full sentence.
+  /// `--dart-define=DEBUG_SCRIPTED_VOICE=true` to enable.
+  static const bool debugScriptedVoice = bool.fromEnvironment(
+    'DEBUG_SCRIPTED_VOICE',
+    defaultValue: false,
+  );
 }

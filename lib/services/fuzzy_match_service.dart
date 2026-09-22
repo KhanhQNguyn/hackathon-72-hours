@@ -43,6 +43,44 @@ class FuzzyMatchService {
     return null;
   }
 
+  /// The candidate whose normalized words overlap [reply]'s the most,
+  /// requiring at least [minSharedWords]. Suited for matching a full
+  /// spoken sentence (e.g. "I choose X at Y in Z") against a short
+  /// candidate label — [bestMatch]'s whole-string edit distance scores
+  /// poorly there since the sentence is much longer than any one label
+  /// (real-target demo flow, item C: picking a job card by voice).
+  String? bestMatchByWordOverlap(
+    String reply,
+    List<String> candidateLabels, {
+    int minSharedWords = 2,
+  }) {
+    final replyWords = _normalize(
+      reply,
+    ).split(' ').where((w) => w.length > 1).toSet();
+    if (replyWords.isEmpty) return null;
+
+    String? best;
+    var bestScore = 0;
+    for (final label in candidateLabels) {
+      final labelWords = _normalize(
+        label,
+      ).split(' ').where((w) => w.length > 1);
+      final score = labelWords.where(replyWords.contains).length;
+      if (score > bestScore) {
+        best = label;
+        bestScore = score;
+      }
+    }
+    return bestScore >= minSharedWords ? best : null;
+  }
+
+  /// Lowercased, diacritic-folded, punctuation-stripped form of [text]
+  /// (public wrapper around the same normalization [bestMatch] uses
+  /// internally) — reused by the real-target demo flow to build a
+  /// VietnamWorks results-URL slug consistently with how fields/labels
+  /// are already compared elsewhere in this service.
+  static String normalize(String text) => _normalize(text);
+
   /// Levenshtein similarity ratio in [0, 1]: `1 - distance / longer`.
   static double similarity(String a, String b) {
     if (a.isEmpty && b.isEmpty) return 1.0;

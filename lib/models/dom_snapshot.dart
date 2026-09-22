@@ -123,3 +123,27 @@ class DomFormField {
     );
   }
 }
+
+/// One job card extracted from a VietnamWorks search-results page (real-
+/// target demo flow, item C). `elementId` is the card container's own
+/// `data-app-node-id`, so it can be highlighted and clicked directly.
+class JobResultCard {
+  final String elementId;
+  final String title;
+  final String company;
+  final String location;
+
+  const JobResultCard({
+    required this.elementId,
+    required this.title,
+    required this.company,
+    required this.location,
+  });
+
+  factory JobResultCard.fromJson(Map<String, dynamic> json) => JobResultCard(
+    elementId: json['elementId'] as String,
+    title: json['title'] as String? ?? '',
+    company: json['company'] as String? ?? '',
+    location: json['location'] as String? ?? '',
+  );
+}

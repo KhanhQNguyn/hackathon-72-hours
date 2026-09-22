@@ -46,4 +46,43 @@ void main() {
       expect(FuzzyMatchService.similarity('abc', 'xyz'), 0.0);
     });
   });
+
+  // Real-target demo flow, item C: matching a full spoken sentence (much
+  // longer than any one candidate label) against short job-card labels —
+  // bestMatch's whole-string edit distance is the wrong tool here.
+  group('bestMatchByWordOverlap — real-target demo flow (item C)', () {
+    test('picks the card most mentioned in a long, code-switched sentence', () {
+      final labels = [
+        'Software Engineer Example Tech Co. Hà Nội',
+        'Senior Software Engineer Wistron NeWeb Corporation (WNC) Hà Nam',
+      ];
+      final reply =
+          'I choose Automation and Smart Manufacturing Software Engineer '
+          'in Wistron NeWeb Corporation (WNC) in Hà Nam';
+      expect(fuzzy.bestMatchByWordOverlap(reply, labels), labels[1]);
+    });
+
+    test('folds diacritics on both sides', () {
+      final labels = ['Kỹ sư phần mềm tại Hà Nam'];
+      expect(
+        fuzzy.bestMatchByWordOverlap('toi chon ky su phan mem ha nam', labels),
+        labels.first,
+      );
+    });
+
+    test('below minSharedWords returns null instead of guessing', () {
+      final labels = ['Senior Software Engineer Wistron NeWeb Corporation Hà Nam'];
+      expect(fuzzy.bestMatchByWordOverlap('the first one please', labels), isNull);
+    });
+
+    test('empty reply gives null', () {
+      expect(fuzzy.bestMatchByWordOverlap('', ['Software Engineer']), isNull);
+    });
+  });
+
+  group('FuzzyMatchService.normalize', () {
+    test('lowercases, folds diacritics, strips punctuation', () {
+      expect(FuzzyMatchService.normalize('Hà Nội, VIỆT NAM!'), 'ha noi viet nam');
+    });
+  });
 }

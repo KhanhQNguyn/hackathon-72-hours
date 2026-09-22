@@ -366,6 +366,48 @@ class WebViewControllerService {
     return json['success'] == true;
   }
 
+  // --- real-target demo flow (VietnamWorks-specific, item B/C/E/F/D) --------
+
+  /// The homepage's "Tìm kiếm" search-submit button, or `null` if not
+  /// found. VNW-specific — deliberately separate from [readDom]'s generic
+  /// submit-candidate heuristic (see dom_reader.js's comment on why).
+  Future<String?> locateSearchSubmitButton() async {
+    final json = await _evalJson('window.__domReader_locateSearchSubmitButton()')
+        as Map<String, dynamic>;
+    return json['elementId'] as String?;
+  }
+
+  /// Job cards on a VNW search-results page (item C).
+  Future<List<JobResultCard>> getResultCards() async {
+    final json = await _evalJson('window.__domReader_getResultCards()') as List<dynamic>;
+    return json.cast<Map<String, dynamic>>().map(JobResultCard.fromJson).toList();
+  }
+
+  /// Dismisses the AI-resume-optimization upsell modal VNW sometimes
+  /// shows between clicking "Nộp đơn" and the real apply form. A no-op
+  /// (returns false) when there's nothing to dismiss.
+  Future<bool> dismissApplyUpsell() async {
+    final json =
+        await _evalJson('window.__domReader_dismissApplyUpsell()') as Map<String, dynamic>;
+    return json['dismissed'] == true;
+  }
+
+  /// Best-effort check for VNW's real submit-success confirmation (item
+  /// F) — see dom_reader.js's `__domReader_detectApplySuccess` doc for
+  /// the "unverified against a real submission" caveat.
+  Future<bool> detectApplySuccess() async {
+    final json =
+        await _evalJson('window.__domReader_detectApplySuccess()') as Map<String, dynamic>;
+    return json['success'] == true;
+  }
+
+  /// Shared focus-highlight utility (item D): outlines [nodeId] on the
+  /// real page so a sighted observer can see what the app is about to
+  /// act on, alongside the spoken label the caller announces separately.
+  Future<void> highlightElement(String nodeId) async {
+    await _evalJson('window.__formFiller_highlightElement(${jsonEncode(nodeId)})');
+  }
+
   // TODO: focusElement(String nodeRef) — Feature 2 "Guided TalkBack
   // Assist" (intent.md §4). Relies entirely on the WebView's own
   // accessibility bridge to Android's TalkBack for the resulting
